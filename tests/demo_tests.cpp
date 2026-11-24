@@ -7,6 +7,7 @@
 #include "services/user_service.hpp"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers.hpp>
 #include <sodium.h>
 #include <trantor/net/EventLoopThread.h>
 #include <unistd.h>
@@ -26,6 +27,11 @@ namespace APP_NAMESPACE {
 struct SampleRow {
     int count;
     std::optional<std::string> label;
+};
+
+struct IndexedRecord {
+    Primary<int> id;
+    Indexed<std::string> category;
 };
 
 }
@@ -80,6 +86,74 @@ bool authenticate(const UserService& users, std::string username, std::string pa
     return drogon::sync_wait(verify());
 }
 
+template <auto Member, typename Value>
+concept SupportsWhere = requires(Value value) { where<Member>(value); };
+
+template <typename Dao, typename Filter>
+concept SupportsFind = requires(const Dao& dao, Filter filter) { dao.find(filter); };
+
+static_assert(SupportsWhere<&UserRecord::username, std::string>);
+static_assert(!SupportsWhere<&UserRecord::username, int>);
+static_assert(!SupportsWhere<&UserDao::count, int>);
+static_assert(!SupportsFind<UserDao, decltype(where<&SampleRow::count>(1))>);
+
+class IndexedDao : public BaseDao<IndexedRecord, int> {
+public:
+    explicit IndexedDao(const fs::path& path) : BaseDao(path, "indexed_records") {}
+};
+
+TEST_CASE("Base DAO generates and validates annotated SQLite schemas", "[users]") {
+    TemporaryDirectory temporary;
+    const auto path = temporary.path() / "schema.sqlite3";
+    const UserDao users(path);
+    drogon::sync_wait(users.executeSql("CREATE TABLE users ("
+        "username TEXT PRIMARY KEY NOT NULL, password_hash TEXT NOT NULL, seed_key TEXT UNIQUE)"));
+    drogon::sync_wait(users.create({"existing", "hash", "demo"}));
+    drogon::sync_wait(users.initialize());
+    CHECK(drogon::sync_wait(users.count()) == 1);
+
+    const IndexedDao indexed(path);
+    drogon::sync_wait(indexed.initialize());
+    drogon::sync_wait(indexed.initialize());
+    const auto indexes = drogon::sync_wait(indexed.executeSql(
+        "SELECT name FROM pragma_index_list('indexed_records') WHERE origin = 'c'"));
+    REQUIRE(indexes.size() == 1);
+    drogon::sync_wait(indexed.create({7, "sample"}));
+    CHECK(drogon::sync_wait(indexed.find(where<&IndexedRecord::category>("sample"))).size() == 1);
+
+    const UserDao incompatible(temporary.path() / "incompatible.sqlite3");
+    drogon::sync_wait(incompatible.executeSql("CREATE TABLE users ("
+        "username TEXT PRIMARY KEY NOT NULL, password_hash TEXT NOT NULL, seed_key TEXT)"));
+    CHECK_THROWS_WITH(drogon::sync_wait(incompatible.initialize()),
+                      "Schema mismatch for users: column seed_key; explicit migration required");
+}
+
+TEST_CASE("Base DAO filters by record members before paginating", "[users]") {
+    TemporaryDirectory temporary;
+    const UserDao users(temporary.path() / "filters.sqlite3");
+    drogon::sync_wait(users.initialize());
+    const std::string punctuation = "charlie' --";
+    drogon::sync_wait(users.create({"alice", "shared", "demo"}));
+    drogon::sync_wait(users.create({"bob", "shared", std::nullopt}));
+    drogon::sync_wait(users.create({punctuation, "other", std::nullopt}));
+
+    const auto demo = drogon::sync_wait(users.find(where<&UserRecord::seedKey>("demo")));
+    REQUIRE(demo.size() == 1);
+    CHECK(demo[0].username.value == "alice");
+
+    const auto match = drogon::sync_wait(users.find(
+        where<&UserRecord::username>(punctuation), where<&UserRecord::seedKey>(std::nullopt)));
+    REQUIRE(match.size() == 1);
+    CHECK(match[0].username.value == punctuation);
+
+    CHECK(drogon::sync_wait(users.find(
+        where<&UserRecord::username>("alice"), where<&UserRecord::seedKey>(std::nullopt))).empty());
+
+    const auto page = drogon::sync_wait(users.find(1, 1, where<&UserRecord::passwordHash>("shared")));
+    REQUIRE(page.size() == 1);
+    CHECK(page[0].username.value == "bob");
+}
+
 TEST_CASE("Base DAO provides asynchronous CRUD and bound SQL", "[users]") {
     TemporaryDirectory temporary;
     const UserDao users(temporary.path() / "crud.sqlite3");
@@ -92,11 +166,11 @@ TEST_CASE("Base DAO provides asynchronous CRUD and bound SQL", "[users]") {
     CHECK_THROWS_AS(drogon::sync_wait(users.find(0)), std::invalid_argument);
     const auto page = drogon::sync_wait(users.find(1, 1));
     REQUIRE(page.size() == 1);
-    CHECK(page[0].username == "bob");
-    CHECK_FALSE(page[0].seedKey);
+    CHECK(page[0].username.value == "bob");
+    CHECK_FALSE(page[0].seedKey.value);
     const auto alice = drogon::sync_wait(users.findById("alice"));
     REQUIRE(alice);
-    CHECK(alice->seedKey == "seed");
+    CHECK(alice->seedKey.value == "seed");
 
     CHECK_FALSE(drogon::sync_wait(users.update({"missing", "new hash", std::nullopt})));
     CHECK_THROWS(drogon::sync_wait(users.update({"bob", "conflict", "seed"})));
@@ -104,7 +178,7 @@ TEST_CASE("Base DAO provides asynchronous CRUD and bound SQL", "[users]") {
     const auto updated = drogon::sync_wait(users.findById("alice"));
     REQUIRE(updated);
     CHECK(updated->passwordHash == "new hash");
-    CHECK_FALSE(updated->seedKey);
+    CHECK_FALSE(updated->seedKey.value);
     const auto bob = drogon::sync_wait(users.findById("bob"));
     REQUIRE(bob);
     CHECK(bob->passwordHash == "hash");
@@ -232,12 +306,14 @@ TEST_CASE("SQLite persists only the hashed demo credential", "[users]") {
     TemporaryDirectory temporary;
     const auto path = temporary.path() / "users with spaces.sqlite3";
     const UserService firstRun(path);
+    drogon::sync_wait(firstRun.initialize());
     const auto credentials = firstRun.seedDemo();
     REQUIRE(credentials.has_value());
     CHECK(credentials->username.starts_with("demo-"));
     CHECK(credentials->password.size() == 32);
 
     const UserService secondRun(path);
+    drogon::sync_wait(secondRun.initialize());
     CHECK_FALSE(secondRun.seedDemo());
     CHECK(authenticate(secondRun, credentials->username, credentials->password));
     CHECK_FALSE(authenticate(secondRun, credentials->username, "wrong"));
@@ -254,6 +330,7 @@ TEST_CASE("Configured demo credentials replace a generated account and survive r
     TemporaryDirectory temporary;
     const auto path = temporary.path() / "users.sqlite3";
     const UserService users(path);
+    drogon::sync_wait(users.initialize());
     const auto previous = users.seedDemo();
     REQUIRE(previous);
 
@@ -262,6 +339,7 @@ TEST_CASE("Configured demo credentials replace a generated account and survive r
     CHECK(authenticate(users, "test_user", "test_password"));
 
     const UserService reopened(path);
+    drogon::sync_wait(reopened.initialize());
     reopened.configureDemo("test_user", "new_password");
     CHECK_FALSE(authenticate(reopened, "test_user", "test_password"));
     CHECK(authenticate(reopened, "test_user", "new_password"));
@@ -275,7 +353,9 @@ TEST_CASE("Concurrent demo seeding returns credentials to exactly one caller", "
     std::latch start(2);
     const auto seed = [&] {
         start.arrive_and_wait();
-        return UserService(path).seedDemo();
+        const UserService users(path);
+        drogon::sync_wait(users.initialize());
+        return users.seedDemo();
     };
     auto first = std::async(std::launch::async, seed);
     const auto secondResult = seed();
@@ -284,6 +364,7 @@ TEST_CASE("Concurrent demo seeding returns credentials to exactly one caller", "
     REQUIRE(firstResult.has_value() != secondResult.has_value());
     const auto& credentials = firstResult ? *firstResult : *secondResult;
     const UserService reopened(path);
+    drogon::sync_wait(reopened.initialize());
     CHECK_FALSE(reopened.seedDemo());
     CHECK(authenticate(reopened, credentials.username, credentials.password));
 }

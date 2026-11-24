@@ -2,14 +2,7 @@
 
 namespace APP_NAMESPACE {
 
-UserDao::UserDao(std::filesystem::path database) : BaseDao(database, "users", "username") {}
-
-drogon::Task<> UserDao::initialize() const {
-    co_await initializeConnection();
-    co_await executeSql("CREATE TABLE IF NOT EXISTS users ("
-                        "username TEXT PRIMARY KEY NOT NULL, password_hash TEXT NOT NULL, "
-                        "seed_key TEXT UNIQUE)");
-}
+UserDao::UserDao(std::filesystem::path database) : BaseDao(database, "users") {}
 
 drogon::Task<bool> UserDao::hasDemo() const {
     const auto rows = co_await executeSql("SELECT 1 FROM users WHERE seed_key = 'demo'");

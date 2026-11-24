@@ -22,6 +22,7 @@ class UserService {
 public:
     explicit UserService(std::filesystem::path database) : dao_(std::move(database)) {}
 
+    drogon::Task<> initialize() const { return dao_.initialize(); }
     std::optional<Credentials> seedDemo() const;
     void configureDemo(std::string_view username, std::string_view password) const;
     drogon::Task<bool> authenticate(std::string username, std::string password, Workers& workers) const;

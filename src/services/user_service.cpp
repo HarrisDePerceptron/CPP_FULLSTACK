@@ -22,7 +22,6 @@ std::string hashPassword(std::string_view password) {
 
 
 std::optional<Credentials> UserService::seedDemo() const {
-    drogon::sync_wait(dao_.initialize());
     if (drogon::sync_wait(dao_.hasDemo())) return std::nullopt;
 
     Credentials credentials{"demo-" + randomHex<6>(), randomHex<16>()};
@@ -31,7 +30,6 @@ std::optional<Credentials> UserService::seedDemo() const {
 }
 
 void UserService::configureDemo(std::string_view username, std::string_view password) const {
-    drogon::sync_wait(dao_.initialize());
     drogon::sync_wait(dao_.replaceDemo(std::string(username), hashPassword(password)));
 }
 

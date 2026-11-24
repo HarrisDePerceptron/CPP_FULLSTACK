@@ -65,6 +65,7 @@ int serve(const std::filesystem::path& root) {
     fs::create_directories(publicPath / "uploads");
 
     auto services = std::make_shared<Services>(root, config, loadSigningKey());
+    drogon::sync_wait(services->users.initialize());
     if (!config.testUser.empty()) {
         services->users.configureDemo(config.testUser, config.testPassword);
     } else if (const auto credentials = services->users.seedDemo()) {

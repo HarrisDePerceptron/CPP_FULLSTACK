@@ -9,5 +9,5 @@ build/
 # Demo state
 /.env
 /.local/
-/public/uploads/
 /node_modules/
+
