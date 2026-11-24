@@ -1,6 +1,6 @@
 #pragma once
 
-#include "schema_field.hpp"
+#include "foreign_record.hpp"
 
 #include <drogon/orm/Row.h>
 #include <drogon/orm/Field.h>
@@ -43,7 +43,13 @@ T rowToStruct(const drogon::orm::Row& row) {
         const std::string name{names[I]};
         auto& field = glz::get<I>(fields);
         using Traits = detail::FieldTraits<std::remove_cvref_t<decltype(field)>>;
-        detail::readRowField(Traits::unwrap(field), row.at(name), name.c_str());
+        if constexpr (Traits::foreignKey().has_value()) {
+            typename Traits::Value key{};
+            detail::readRowField(key, row.at(name), name.c_str());
+            Traits::setKey(field, std::move(key));
+        } else {
+            detail::readRowField(Traits::unwrap(field), row.at(name), name.c_str());
+        }
     };
     [&]<std::size_t... I>(std::index_sequence<I...>) {
         (readMember.template operator()<I>(), ...);

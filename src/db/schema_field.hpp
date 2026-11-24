@@ -18,6 +18,10 @@ enum class ColumnType { text, integer, boolean, real, datetime };
 
 using ColumnDefault = std::variant<std::string, std::int64_t, bool, double>;
 
+struct ForeignKey {
+    std::string_view table, column;
+};
+
 struct DatabaseColumn {
     std::string name;
     ColumnType type;
@@ -25,6 +29,7 @@ struct DatabaseColumn {
     std::optional<ColumnDefault> defaultValue;
     bool generated = false;
     bool timestamp = false;
+    std::optional<ForeignKey> foreignKey;
 };
 
 enum class ColumnConstraint { primary, unique, indexed };
@@ -115,6 +120,7 @@ struct FieldTraits {
     static constexpr bool primary = false, unique = false, indexed = false;
     static T& unwrap(T& field) { return field; }
     static std::optional<ColumnDefault> defaultMetadata() { return std::nullopt; }
+    static constexpr std::optional<ForeignKey> foreignKey() { return std::nullopt; }
 };
 
 template <typename T, auto Initial>
@@ -135,6 +141,9 @@ struct FieldTraits<SchemaField<T, Constraint>> : FieldTraits<T> {
     static constexpr bool unique = Constraint == ColumnConstraint::unique;
     static constexpr bool indexed = Constraint == ColumnConstraint::indexed;
     static auto& unwrap(SchemaField<T, Constraint>& field) { return Inner::unwrap(field.value); }
+    static void setKey(SchemaField<T, Constraint>& field, typename Inner::Value key) {
+        Inner::setKey(field.value, std::move(key));
+    }
 };
 
 template <typename T>

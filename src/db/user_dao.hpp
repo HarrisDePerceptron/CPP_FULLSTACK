@@ -13,6 +13,8 @@
 namespace APP_NAMESPACE {
 
 struct UserFields {
+    static constexpr std::string_view table_name = "users";
+
     Unique<std::string> username;
     std::string password_hash;
     Unique<std::optional<std::string>> seed_key;

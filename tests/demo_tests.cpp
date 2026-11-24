@@ -32,6 +32,8 @@ struct SampleRow {
 };
 
 struct IndexedFields {
+    static constexpr std::string_view table_name = "indexed_records";
+
     Primary<int> id;
     Indexed<std::string> category;
     std::optional<std::string> note;
@@ -42,6 +44,16 @@ struct IndexedFields {
 };
 
 using IndexedRecord = DaoRecord<IndexedFields>;
+
+struct PostFields {
+    static constexpr std::string_view table_name = "posts";
+
+    std::string title;
+    Indexed<RequiredForeign<UserRecord>> author_id;
+    Foreign<IndexedRecord> reviewer_id;
+};
+
+using PostRecord = DaoRecord<PostFields>;
 
 }
 
@@ -130,7 +142,7 @@ public:
 
 private:
     explicit IndexedDao(DatabaseBackendPtr database)
-        : BaseDao(std::move(database), "indexed_records") {}
+        : BaseDao(std::move(database)) {}
 };
 
 class UntimedUserDao final : public BaseDao<UntimedUserDao, UserRecord, DaoOptions{.timestamps = false}> {
@@ -140,8 +152,119 @@ public:
     }
 
 private:
-    explicit UntimedUserDao(DatabaseBackendPtr database) : BaseDao(std::move(database), "users") {}
+    explicit UntimedUserDao(DatabaseBackendPtr database) : BaseDao(std::move(database)) {}
 };
+
+class PostDao final : public BaseDao<PostDao, PostRecord> {
+public:
+    static drogon::Task<PostDao> init(DatabaseBackendPtr database) {
+        co_return co_await finishInitialization(PostDao(std::move(database)));
+    }
+
+private:
+    explicit PostDao(DatabaseBackendPtr database) : BaseDao(std::move(database)) {}
+};
+
+template <auto Member, typename TargetDao>
+concept SupportsForeignFind = requires(const PostDao& posts, const TargetDao& target) {
+    posts.findById(1, withForeign<Member>(target));
+};
+
+static_assert(SupportsForeignFind<&PostRecord::author_id, UserDao>);
+static_assert(!SupportsForeignFind<&PostRecord::title, UserDao>);
+static_assert(!SupportsForeignFind<&PostRecord::author_id, IndexedDao>);
+static_assert(!SupportsForeignFind<&UserRecord::username, UserDao>);
+
+TEST_CASE("Foreign record fields enforce references and load related records on demand", "[users]") {
+    TemporaryDirectory temporary;
+    const auto database = openTestDatabase(temporary.path() / "relations.sqlite3");
+    const auto users = drogon::sync_wait(UserDao::init(database));
+    const auto reviewers = drogon::sync_wait(IndexedDao::init(database));
+    const auto author = drogon::sync_wait(users.create({{"author", "hash"}}));
+    drogon::sync_wait(reviewers.create({{7, "reviewer"}}));
+    const auto posts = drogon::sync_wait(PostDao::init(database));
+    CHECK_THROWS(drogon::sync_wait(posts.create({{"invalid", author + 1, {}}})));
+    const auto id = drogon::sync_wait(posts.create({{"first", author, {}}}));
+    auto post = drogon::sync_wait(posts.findById(id));
+    REQUIRE(post);
+    CHECK(post->author_id.value.key() == author);
+    const auto with_null = drogon::sync_wait(posts.findById(
+        id, withForeign<&PostRecord::reviewer_id>(reviewers)));
+    REQUIRE(with_null);
+    CHECK_FALSE(with_null->reviewer_id.record());
+    CHECK_FALSE(drogon::sync_wait(posts.findById(
+        id + 1, withForeign<&PostRecord::author_id>(users))));
+    CHECK_FALSE(post->author_id.value.record());
+    CHECK_FALSE(drogon::sync_wait(reviewers.loadForeign(post->reviewer_id)));
+    CHECK(drogon::sync_wait(users.loadForeign(post->author_id.value)));
+    REQUIRE(post->author_id.value.record());
+    CHECK(post->author_id.value.record()->username.value == "author");
+    post->reviewer_id.setKey(7);
+    CHECK(drogon::sync_wait(posts.update(*post)));
+    const auto selected_author = drogon::sync_wait(posts.findById(
+        id, withForeign<&PostRecord::author_id>(users)));
+    REQUIRE(selected_author);
+    CHECK(selected_author->author_id.value.record());
+    CHECK_FALSE(selected_author->reviewer_id.record());
+    const auto selected_both = drogon::sync_wait(posts.findById(
+        id, withForeign<&PostRecord::author_id>(users), withForeign<&PostRecord::reviewer_id>(reviewers)));
+    REQUIRE(selected_both);
+    REQUIRE(selected_both->author_id.value.record());
+    REQUIRE(selected_both->reviewer_id.record());
+    CHECK(selected_both->author_id.value.record()->username.value == "author");
+    CHECK(selected_both->reviewer_id.record()->category.value == "reviewer");
+    const auto other_users = drogon::sync_wait(UserDao::init(openTestDatabase(temporary.path() / "other.sqlite3")));
+    CHECK_THROWS_WITH(drogon::sync_wait(posts.findById(
+        id, withForeign<&PostRecord::author_id>(other_users))), "foreign DAOs must use the same database backend");
+    const auto matches = drogon::sync_wait(posts.find(where<&PostRecord::reviewer_id>(7)));
+    REQUIRE(matches.size() == 1);
+    CHECK_FALSE(matches[0].reviewer_id.record());
+    CHECK(drogon::sync_wait(reviewers.loadForeign(post->reviewer_id)));
+    REQUIRE(post->reviewer_id.record());
+    CHECK(post->reviewer_id.record()->category.value == "reviewer");
+    post->reviewer_id.setKey(8);
+    CHECK_FALSE(post->reviewer_id.record());
+    CHECK_FALSE(drogon::sync_wait(reviewers.loadForeign(post->reviewer_id)));
+    CHECK_THROWS(drogon::sync_wait(posts.update(*post)));
+    CHECK_THROWS(drogon::sync_wait(users.deleteById(author)));
+    CHECK(drogon::sync_wait(posts.deleteById(id)));
+    CHECK(drogon::sync_wait(users.deleteById(author)));
+}
+
+
+TEST_CASE("SQLite startup adds nullable foreign columns and rejects inconsistent references", "[users]") {
+    TemporaryDirectory temporary;
+    const auto path = temporary.path() / "relations.sqlite3";
+    const auto database = openTestDatabase(path);
+    const auto users = drogon::sync_wait(UserDao::init(database));
+    CHECK_THROWS_WITH(drogon::sync_wait(PostDao::init(database)),
+                      "Schema mismatch for posts: invalid foreign key target for reviewer_id; explicit migration required");
+    const auto reviewers = drogon::sync_wait(IndexedDao::init(database));
+    const auto author = drogon::sync_wait(users.create({{"author", "hash"}}));
+    const auto legacy = drogon::orm::DbClient::newSqlite3Client("filename='" + path.string() + "'", 1);
+    legacy->execSqlSync("CREATE TABLE posts (title TEXT NOT NULL, author_id INTEGER NOT NULL "
+                        "REFERENCES users(id) ON UPDATE RESTRICT ON DELETE RESTRICT, "
+                        "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL)");
+    legacy->execSqlSync("INSERT INTO posts (title, author_id) VALUES ('existing', ?)", author);
+    const auto posts = drogon::sync_wait(PostDao::init(database));
+    const auto rows = drogon::sync_wait(posts.find(where<&PostRecord::reviewer_id>(std::nullopt)));
+    REQUIRE(rows.size() == 1);
+    CHECK_FALSE(rows[0].reviewer_id.key());
+    legacy->execSqlSync("PRAGMA foreign_keys = OFF");
+    legacy->execSqlSync("UPDATE posts SET reviewer_id = 99");
+    const auto orphan = drogon::sync_wait(posts.findById(
+        *rows[0].id, withForeign<&PostRecord::reviewer_id>(reviewers)));
+    REQUIRE(orphan);
+    CHECK(orphan->reviewer_id.key() == 99);
+    CHECK_FALSE(orphan->reviewer_id.record());
+    CHECK_THROWS_WITH(drogon::sync_wait(PostDao::init(database)),
+                      "Schema mismatch for posts: orphaned foreign key rows; explicit migration required");
+    legacy->execSqlSync("DROP TABLE posts");
+    legacy->execSqlSync("CREATE TABLE posts (title TEXT NOT NULL, author_id INTEGER NOT NULL, "
+                        "reviewer_id INTEGER, id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL)");
+    CHECK_THROWS_WITH(drogon::sync_wait(PostDao::init(database)),
+                      "Schema mismatch for posts: foreign key for author_id; explicit migration required");
+}
 
 TEST_CASE("Base DAO generates and validates annotated SQLite schemas", "[users]") {
     TemporaryDirectory temporary;

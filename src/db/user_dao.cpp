@@ -7,7 +7,7 @@ drogon::Task<UserDao> UserDao::init(DatabaseBackendPtr database) {
 }
 
 UserDao::UserDao(DatabaseBackendPtr database)
-    : BaseDao(std::move(database), "users", LegacyMigration::usersUsernameKey) {}
+    : BaseDao(std::move(database), LegacyMigration::usersUsernameKey) {}
 
 drogon::Task<std::optional<UserRecord>> UserDao::findByUsername(std::string username) const {
     auto rows = co_await find(1, 0, where<&UserRecord::username>(std::move(username)));

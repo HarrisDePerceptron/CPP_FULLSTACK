@@ -60,6 +60,8 @@ class BaseDao {
          std::same_as<detail::DaoGeneratedKey<Fields, true>, typename detail::DaoPredicate<Member>::Record>);
 
 public:
+    using RecordType = Record;
+
     drogon::Task<std::vector<Record>> find(std::int64_t limit = 100, std::int64_t offset = 0) const {
         return findPage(limit, offset);
     }
@@ -79,10 +81,34 @@ public:
         return findPage(limit, offset, std::move(predicates)...);
     }
 
+    template <bool Nullable>
+    drogon::Task<bool> loadForeign(Foreign<Record, Nullable>& field) const {
+        return field.load(*this);
+    }
+
     drogon::Task<std::optional<Record>> findById(Id id) const {
         const auto rows = co_await executeSql(select_ + " WHERE " + key_ + " = " + parameter(1), std::move(id));
         if (rows.empty()) co_return std::nullopt;
         co_return mapRow(rows[0]);
+    }
+
+    template <auto... Members, typename... TargetDaos>
+        requires (sizeof...(Members) > 0)
+            && (detail::ForeignSelectionFor<Members, Record, TargetDaos> && ...)
+    drogon::Task<std::optional<Record>> findById(
+        Id id, detail::ForeignSelection<Members, TargetDaos>... selections) const {
+        if (!(selections.dao.get().usesBackend(database_) && ...)) {
+            throw std::invalid_argument("foreign DAOs must use the same database backend");
+        }
+        auto record = co_await findById(std::move(id));
+        if (record) {
+            ((co_await selections.dao.get().loadForeign(detail::foreignField((*record).*Members))), ...);
+        }
+        co_return record;
+    }
+
+    bool usesBackend(const DatabaseBackendPtr& database) const {
+        return database_ == database;
     }
 
     drogon::Task<Id> create(Record record) const {
@@ -125,9 +151,9 @@ protected:
     BaseDao(BaseDao&&) noexcept = default;
     BaseDao& operator=(BaseDao&&) noexcept = default;
 
-    BaseDao(DatabaseBackendPtr database, std::string_view table,
+    BaseDao(DatabaseBackendPtr database,
             LegacyMigration migration = LegacyMigration::none)
-        : database_(std::move(database)), tableName_(table), table_(detail::quoteIdentifier(table)),
+        : database_(std::move(database)), tableName_(Fields::table_name), table_(detail::quoteIdentifier(tableName_)),
           migration_(migration) {
         if (!database_) throw std::invalid_argument("DAO requires a database backend");
         buildSchema(indices_);
@@ -202,9 +228,15 @@ private:
         constexpr auto name = names_[I];
         static_assert(!timestampName(name) && (!Record::generatedId || name != "id"),
                       "reserved DAO fields are inherited");
-        schema_.push_back({std::string(name), detail::columnType<typename Value<I>::Type>(),
+        static_assert(!Traits<I>::foreignKey() || !Traits<I>::primary, "foreign fields cannot be primary keys");
+        auto field = DatabaseColumn{std::string(name), detail::columnType<typename Value<I>::Type>(),
                            Value<I>::nullable, Traits<I>::primary, Traits<I>::unique, Traits<I>::indexed,
-                           Traits<I>::defaultMetadata()});
+                           Traits<I>::defaultMetadata()};
+        field.foreignKey = Traits<I>::foreignKey();
+        if (field.foreignKey && field.defaultValue) {
+            throw std::invalid_argument("foreign fields cannot declare a default");
+        }
+        schema_.push_back(std::move(field));
     }
 
     template <std::size_t... I>

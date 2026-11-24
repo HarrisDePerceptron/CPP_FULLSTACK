@@ -101,6 +101,7 @@ public:
             co_await createIndexes();
             co_await createTimestampTriggers();
             co_await reconcileSchema(false);
+            co_await validateForeignKeys();
             co_await executeSql("COMMIT");
         } catch (...) {
             failure = std::current_exception();
@@ -232,7 +233,45 @@ private:
         if (!field.nullable) definition += " NOT NULL";
         if (field.unique) definition += " UNIQUE";
         if (const auto value = sqliteDefault(field)) definition += " DEFAULT " + *value;
+        if (const auto target = field.foreignKey) {
+            definition += " REFERENCES " + quoteIdentifier(target->table) + " (" +
+                          quoteIdentifier(target->column) + ") ON UPDATE RESTRICT ON DELETE RESTRICT";
+        }
         return definition;
+    }
+
+    drogon::Task<> validateForeignKeys() const {
+        const auto constraints = co_await executeSql(
+            "SELECT [from], [table], [to], on_update, on_delete, seq FROM pragma_foreign_key_list(?)",
+            tableName_);
+        std::size_t expected = 0;
+        for (const auto& field : schema_) {
+            if (!field.foreignKey) continue;
+            ++expected;
+            const auto target = *field.foreignKey;
+            const auto parent = co_await executeSql(
+                "SELECT name, upper(type) FROM pragma_table_info(?) WHERE pk > 0",
+                std::string(target.table));
+            if (parent.size() != 1 || parent[0][0].as<std::string>() != target.column ||
+                parent[0][1].as<std::string>() != sqliteType(field.type)) {
+                schemaError("invalid foreign key target for " + field.name);
+            }
+
+            const auto count = std::count_if(constraints.begin(), constraints.end(), [&](const auto& row) {
+                return row[0].template as<std::string>() == field.name &&
+                       row[1].template as<std::string>() == target.table &&
+                       row[2].template as<std::string>() == target.column &&
+                       row[3].template as<std::string>() == "RESTRICT" &&
+                       row[4].template as<std::string>() == "RESTRICT" &&
+                       row[5].template as<int>() == 0;
+            });
+            if (count != 1) schemaError("foreign key for " + field.name);
+        }
+        if (constraints.size() != expected) schemaError("unexpected foreign key constraint");
+        if (expected != 0) {
+            const auto violations = co_await executeSql("SELECT 1 FROM pragma_foreign_key_check(?) LIMIT 1", tableName_);
+            if (!violations.empty()) schemaError("orphaned foreign key rows");
+        }
     }
 
     drogon::Task<> reconcileSchema(bool addMissing) const {
@@ -322,6 +361,11 @@ drogon::Task<DatabaseBackendPtr> openSqliteDatabase(std::filesystem::path path) 
     auto client = drogon::orm::DbClient::newSqlite3Client(connection, 1);
     client->setTimeout(5.0);
     co_await detail::executeOn(client, "PRAGMA busy_timeout = 3000");
+    co_await detail::executeOn(client, "PRAGMA foreign_keys = ON");
+    const auto enforcement = co_await detail::executeOn(client, "PRAGMA foreign_keys");
+    if (enforcement.empty() || enforcement[0][0].as<int>() != 1) {
+        throw std::runtime_error("could not enable SQLite foreign key enforcement");
+    }
     co_return std::make_shared<SqliteBackend>(std::move(client));
 }
 

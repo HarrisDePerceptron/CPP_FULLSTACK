@@ -67,6 +67,13 @@ struct DaoRecord : Fields, detail::DaoTimestamps<Fields>,
     using Id = typename std::tuple_element_t<0, decltype(std::tuple_cat(
         Keys{}, std::tuple{std::type_identity<std::int64_t>{}}))>::type;
 
+    static constexpr std::string_view keyColumn = []<std::size_t... I>(std::index_sequence<I...>) {
+        std::string_view key = "id";
+        constexpr auto names = glz::reflect<Fields>::keys;
+        ((detail::DaoFieldTraits<Fields, I>::primary ? void(key = names[I]) : void()), ...);
+        return key;
+    }(std::make_index_sequence<glz::reflect<Fields>::keys.size()>{});
+
     DaoRecord() = default;
     DaoRecord(Fields fields) : Fields(std::move(fields)) {}
 };
