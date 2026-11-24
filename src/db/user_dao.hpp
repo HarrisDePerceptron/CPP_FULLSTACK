@@ -18,13 +18,15 @@ struct UserRecord {
     Unique<std::optional<std::string>> seedKey;
 };
 
-class UserDao : public BaseDao<UserRecord, std::string> {
+class UserDao final : public BaseDao<UserDao, UserRecord, std::string> {
 public:
-    explicit UserDao(std::filesystem::path database);
-
     drogon::Task<bool> hasDemo() const;
     drogon::Task<bool> insertDemo(std::string username, std::string passwordHash) const;
     drogon::Task<> replaceDemo(std::string username, std::string passwordHash) const;
+
+private:
+    friend class BaseDao<UserDao, UserRecord, std::string>;
+    explicit UserDao(DatabaseBackendPtr database);
 };
 
 }

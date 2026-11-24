@@ -14,8 +14,8 @@
 namespace APP_NAMESPACE {
 
 struct Services {
-    Services(const std::filesystem::path& root, const Config& config, std::string key)
-        : users(root / ".local/users.sqlite3"),
+    Services(const std::filesystem::path& root, const Config& config, std::string key, UserService userService)
+        : users(std::move(userService)),
           tokens(std::move(key), config.jwtLifetime),
           uploads(root / "public/uploads"),
           log(config.logLevel) {}

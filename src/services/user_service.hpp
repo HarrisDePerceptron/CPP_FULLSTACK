@@ -20,11 +20,10 @@ struct Credentials {
 
 class UserService {
 public:
-    explicit UserService(std::filesystem::path database) : dao_(std::move(database)) {}
+    explicit UserService(UserDao dao) : dao_(std::move(dao)) {}
 
-    drogon::Task<> initialize() const { return dao_.initialize(); }
-    std::optional<Credentials> seedDemo() const;
-    void configureDemo(std::string_view username, std::string_view password) const;
+    drogon::Task<std::optional<Credentials>> seedDemo() const;
+    drogon::Task<> configureDemo(std::string username, std::string password) const;
     drogon::Task<bool> authenticate(std::string username, std::string password, Workers& workers) const;
 
 private:

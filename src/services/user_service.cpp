@@ -21,16 +21,16 @@ std::string hashPassword(std::string_view password) {
 }
 
 
-std::optional<Credentials> UserService::seedDemo() const {
-    if (drogon::sync_wait(dao_.hasDemo())) return std::nullopt;
+drogon::Task<std::optional<Credentials>> UserService::seedDemo() const {
+    if (co_await dao_.hasDemo()) co_return std::nullopt;
 
     Credentials credentials{"demo-" + randomHex<6>(), randomHex<16>()};
-    if (!drogon::sync_wait(dao_.insertDemo(credentials.username, hashPassword(credentials.password)))) return std::nullopt;
-    return credentials;
+    if (!co_await dao_.insertDemo(credentials.username, hashPassword(credentials.password))) co_return std::nullopt;
+    co_return credentials;
 }
 
-void UserService::configureDemo(std::string_view username, std::string_view password) const {
-    drogon::sync_wait(dao_.replaceDemo(std::string(username), hashPassword(password)));
+drogon::Task<> UserService::configureDemo(std::string username, std::string password) const {
+    co_await dao_.replaceDemo(std::move(username), hashPassword(password));
 }
 
 drogon::Task<bool> UserService::authenticate(std::string username, std::string password, Workers& workers) const {

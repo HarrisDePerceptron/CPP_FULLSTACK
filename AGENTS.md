@@ -26,6 +26,8 @@ Listener settings resolve from the process environment, then `.env`, then `confi
 
 Use four spaces and place opening braces on the declaration line. Use `.hpp` for C++ headers and `.cpp` for implementations. Keep route handlers small and delegate persistence and outbound calls to their modules. Always use `co_await` for asynchronous application code and `std::println` for console output, including logs. Use `jsonResponse` for typed API responses.
 
+Prefer values for direct ownership and references for required borrows. Use `std::optional<std::reference_wrapper<T>>` for optional borrows and smart pointers for explicit heap ownership. Avoid raw pointers in application interfaces. Adapt third-party APIs that require raw pointers at the integration boundary.
+
 ## Testing
 
 Run `xmake test` to run Catch2. Name test files `*_tests.cpp` and describe observable behavior in test case names. Use temporary state and a loopback fixture for upstream calls. Smoke-test HTTP changes through the demo page and verify returned download links.

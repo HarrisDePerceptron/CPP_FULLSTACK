@@ -8,6 +8,7 @@
 
 #include <drogon/drogon.h>
 #include <sodium.h>
+#include <trantor/net/EventLoopThread.h>
 #include <trantor/utils/Logger.h>
 
 #include <cstdio>
@@ -64,14 +65,27 @@ int serve(const std::filesystem::path& root) {
     fs::create_directories(state / "empty");
     fs::create_directories(publicPath / "uploads");
 
-    auto services = std::make_shared<Services>(root, config, loadSigningKey());
-    drogon::sync_wait(services->users.initialize());
-    if (!config.testUser.empty()) {
-        services->users.configureDemo(config.testUser, config.testPassword);
-    } else if (const auto credentials = services->users.seedDemo()) {
-        std::println("Demo account created. Username: {} Password: {}", credentials->username,
-                     credentials->password);
-        std::fflush(stdout);
+    auto signingKey = loadSigningKey();
+    std::shared_ptr<Services> services;
+    {
+        trantor::EventLoopThread startupThread;
+        startupThread.run();
+        const auto setup = [&]() -> Task<std::shared_ptr<Services>> {
+            co_await switchThreadCoro(startupThread.getLoop());
+            auto database = co_await openSqliteDatabase(state / "users.sqlite3");
+            auto dao = co_await UserDao::init(std::move(database));
+            auto initialized = std::make_shared<Services>(root, config, std::move(signingKey),
+                                                          UserService(std::move(dao)));
+            if (!config.testUser.empty()) {
+                co_await initialized->users.configureDemo(config.testUser, config.testPassword);
+            } else if (const auto credentials = co_await initialized->users.seedDemo()) {
+                std::println("Demo account created. Username: {} Password: {}", credentials->username,
+                             credentials->password);
+                std::fflush(stdout);
+            }
+            co_return initialized;
+        };
+        services = sync_wait(setup());
     }
 
     auto& server = app();

@@ -2,7 +2,7 @@
 
 namespace APP_NAMESPACE {
 
-UserDao::UserDao(std::filesystem::path database) : BaseDao(database, "users") {}
+UserDao::UserDao(DatabaseBackendPtr database) : BaseDao(std::move(database), "users") {}
 
 drogon::Task<bool> UserDao::hasDemo() const {
     const auto rows = co_await executeSql("SELECT 1 FROM users WHERE seed_key = 'demo'");
@@ -12,14 +12,14 @@ drogon::Task<bool> UserDao::hasDemo() const {
 drogon::Task<bool> UserDao::insertDemo(std::string username, std::string passwordHash) const {
     const auto result = co_await executeSql(
         "INSERT INTO users (username, password_hash, seed_key) "
-        "VALUES (?, ?, 'demo') ON CONFLICT(seed_key) DO NOTHING",
+        "VALUES (" + parameter(1) + ", " + parameter(2) + ", 'demo') ON CONFLICT(seed_key) DO NOTHING",
         std::move(username), std::move(passwordHash));
     co_return result.affectedRows() == 1;
 }
 
 drogon::Task<> UserDao::replaceDemo(std::string username, std::string passwordHash) const {
     co_await executeSql("INSERT INTO users (username, password_hash, seed_key) "
-                        "VALUES (?, ?, 'demo') ON CONFLICT(seed_key) DO UPDATE SET "
+                        "VALUES (" + parameter(1) + ", " + parameter(2) + ", 'demo') ON CONFLICT(seed_key) DO UPDATE SET "
                         "username = excluded.username, password_hash = excluded.password_hash",
                         std::move(username), std::move(passwordHash));
 }

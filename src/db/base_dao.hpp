@@ -1,16 +1,14 @@
 #pragma once
 
+#include "database_backend.hpp"
 #include "row_to_struct.hpp"
 
 #include <drogon/orm/DbClient.h>
 #include <drogon/utils/coroutine.h>
 #include <glaze/reflection/get_name.hpp>
 
-#include <algorithm>
 #include <concepts>
 #include <cstdint>
-#include <exception>
-#include <filesystem>
 #include <vector>
 
 namespace APP_NAMESPACE {
@@ -43,7 +41,7 @@ auto where(Value&& value) {
     return detail::DaoPredicate<Member>{Type(std::forward<Value>(value))};
 }
 
-template <glz::reflectable Record, typename Id>
+template <typename Derived, glz::reflectable Record, typename Id>
 class BaseDao {
 public:
     drogon::Task<std::vector<Record>> find(std::int64_t limit = 100, std::int64_t offset = 0) const {
@@ -66,7 +64,7 @@ public:
     }
 
     drogon::Task<std::optional<Record>> findById(Id id) const {
-        const auto rows = co_await executeSql(select_ + " WHERE " + key_ + " = ?", std::move(id));
+        const auto rows = co_await executeSql(select_ + " WHERE " + key_ + " = " + parameter(1), std::move(id));
         if (rows.empty()) co_return std::nullopt;
         co_return rowToStruct<Record>(rows[0]);
     }
@@ -81,7 +79,7 @@ public:
     }
 
     drogon::Task<bool> deleteById(Id id) const {
-        const auto result = co_await executeSql("DELETE FROM " + table_ + " WHERE " + key_ + " = ?", std::move(id));
+        const auto result = co_await executeSql("DELETE FROM " + table_ + " WHERE " + key_ + " = " + parameter(1), std::move(id));
         co_return result.affectedRows() != 0;
     }
 
@@ -96,77 +94,54 @@ public:
         return execute(std::move(sql), ownArgument(std::forward<Args>(args))...);
     }
 
-    drogon::Task<> initialize() const {
-        co_await executeSql("PRAGMA busy_timeout = 3000");
-        co_await executeSql(createTable_);
-        co_await validateSchema();
-        for (const auto& column : schema_) {
-            if (!column.indexed) continue;
-            const auto index = "idx_" + std::to_string(tableName_.size()) + "_" + tableName_ + "_" + column.name;
-            co_await executeSql("CREATE INDEX IF NOT EXISTS " + quoteIdentifier(index) +
-                                " ON " + table_ + " (" + quoteIdentifier(column.name) + ")");
-            const auto indexes = co_await executeSql("SELECT [unique], partial FROM pragma_index_list(?) WHERE name = ?", tableName_, index);
-            const auto fields = co_await executeSql("SELECT name FROM pragma_index_info(?)", index);
-            if (indexes.size() != 1 || indexes[0][0].template as<int>() != 0 ||
-                indexes[0][1].template as<int>() != 0 || fields.size() != 1 ||
-                fields[0][0].template as<std::string>() != column.name) {
-                schemaError("invalid index " + index);
-            }
-        }
+    static drogon::Task<Derived> init(DatabaseBackendPtr database) {
+        if (!database) throw std::invalid_argument("DAO requires a database backend");
+        Derived dao(std::move(database));
+        auto& base = static_cast<BaseDao&>(dao);
+        co_await base.database_->initializeTable(base.tableName_, std::move(base.schema_));
+        co_return std::move(dao);
     }
 
-protected:
-    BaseDao(const std::filesystem::path& database, std::string_view table)
-        : tableName_(table), table_(quoteIdentifier(table)) {
-        std::string connection = "filename='";
-        for (char character : database.string()) {
-            if (character == '\\' || character == '\'') connection += '\\';
-            connection += character;
-        }
-        connection += '\'';
-        db_ = drogon::orm::DbClient::newSqlite3Client(connection, 1);
-        db_->setTimeout(5.0);
+private:
+    friend Derived;
 
+    BaseDao(const BaseDao&) = delete;
+    BaseDao& operator=(const BaseDao&) = delete;
+    BaseDao(BaseDao&&) noexcept = default;
+    BaseDao& operator=(BaseDao&&) noexcept = default;
+
+    BaseDao(DatabaseBackendPtr database, std::string_view table)
+        : database_(std::move(database)), tableName_(table), table_(detail::quoteIdentifier(table)) {
         buildSchema(std::make_index_sequence<glz::reflect<Record>::keys.size()>{});
-        std::string projection, columns, placeholders, assignments, keyParameter, definitions;
-        std::size_t parameterIndex = 0;
-        for (const auto& field : schema_) {
-            if (!columns.empty()) {
+        std::string projection, columns, placeholders, assignments, keyParameter;
+        constexpr auto members = glz::reflect<Record>::keys;
+        for (std::size_t i = 0; i < schema_.size(); ++i) {
+            const auto& field = schema_[i];
+            if (i != 0) {
                 projection += ", ";
                 columns += ", ";
                 placeholders += ", ";
-                definitions += ", ";
             }
-            const auto column = quoteIdentifier(field.name);
-            definitions += column + " " + std::string(field.type);
-            if (field.primary) definitions += " PRIMARY KEY";
-            if (!field.nullable) definitions += " NOT NULL";
-            if (field.unique) definitions += " UNIQUE";
-            projection += column + " AS " + quoteIdentifier(field.member);
+            const auto column = detail::quoteIdentifier(field.name);
+            projection += column + " AS " + detail::quoteIdentifier(members[i]);
             columns += column;
-            placeholders += '?';
-            const auto parameter = "?" + std::to_string(++parameterIndex);
+            const auto marker = parameter(i + 1);
+            placeholders += marker;
             if (field.primary) {
                 key_ = column;
-                keyParameter = parameter;
+                keyParameter = marker;
             } else {
                 if (!assignments.empty()) assignments += ", ";
-                assignments += column + " = " + parameter;
+                assignments += column + " = " + marker;
             }
         }
-        createTable_ = "CREATE TABLE IF NOT EXISTS " + table_ + " (" + definitions + ")";
         if (assignments.empty()) assignments = key_ + " = " + key_;
         update_ = "UPDATE " + table_ + " SET " + assignments + " WHERE " + key_ + " = " + keyParameter;
         select_ = "SELECT " + projection + " FROM " + table_;
         insert_ = "INSERT INTO " + table_ + " (" + columns + ") VALUES (" + placeholders + ")";
     }
 
-private:
-    struct Column {
-        std::string name;
-        std::string_view member, type;
-        bool nullable, primary, unique, indexed;
-    };
+    std::string parameter(std::size_t index) const { return database_->parameter(index); }
 
     template <std::size_t I>
     using Traits = detail::FieldTraits<std::remove_cvref_t<decltype(
@@ -182,35 +157,9 @@ private:
             (!Value<I>::nullable && std::same_as<typename Value<I>::Type, Id>)) && ...),
             "primary field must be nonnullable and match the DAO ID type");
         constexpr auto names = glz::reflect<Record>::keys;
-        (schema_.push_back({snakeCase(names[I]), names[I], detail::sqliteType<typename Value<I>::Type>(),
-                           Value<I>::nullable, Traits<I>::primary, Traits<I>::unique, Traits<I>::indexed}), ...);
-    }
-
-    [[noreturn]] void schemaError(const std::string& detail) const {
-        throw std::runtime_error("Schema mismatch for " + tableName_ + ": " + detail + "; explicit migration required");
-    }
-
-    drogon::Task<> validateSchema() const {
-        const auto columns = co_await executeSql("SELECT name, upper(type), [notnull], pk FROM pragma_table_info(?)", tableName_);
-        if (columns.size() != schema_.size()) schemaError("column count differs");
-        const auto uniqueColumns = co_await executeSql(
-            "SELECT info.name FROM pragma_index_list(?) AS idx "
-            "JOIN pragma_index_info(idx.name) AS info "
-            "WHERE idx.[unique] = 1 AND idx.origin != 'pk' AND idx.partial = 0 "
-            "AND (SELECT count(*) FROM pragma_index_info(idx.name)) = 1", tableName_);
-        for (const auto& expected : schema_) {
-            auto actual = std::find_if(columns.begin(), columns.end(), [&](const auto& row) {
-                return row[0].template as<std::string>() == expected.name;
-            });
-            const bool unique = std::any_of(uniqueColumns.begin(), uniqueColumns.end(), [&](const auto& row) {
-                return !row[0].isNull() && row[0].template as<std::string>() == expected.name;
-            });
-            if (actual == columns.end() || (*actual)[1].template as<std::string>() != expected.type ||
-                (*actual)[2].template as<int>() != !expected.nullable ||
-                (*actual)[3].template as<int>() != expected.primary || unique != expected.unique) {
-                schemaError("column " + expected.name);
-            }
-        }
+        (schema_.push_back({snakeCase(names[I]), detail::columnType<typename Value<I>::Type>(),
+                           Value<I>::nullable, Traits<I>::primary, Traits<I>::unique, Traits<I>::indexed,
+                           Traits<I>::defaultMetadata()}), ...);
     }
 
     template <auto... Members>
@@ -220,13 +169,15 @@ private:
         auto sql = select_;
         if constexpr (sizeof...(Members) > 0) {
             auto separator = " WHERE ";
+            std::size_t index = 0;
             auto append = [&](std::string_view name) {
-                sql += separator + quoteIdentifier(snakeCase(name)) + " IS ?";
+                sql += separator + database_->nullSafeEqual(detail::quoteIdentifier(snakeCase(name)), ++index);
                 separator = " AND ";
             };
             (append(detail::DaoPredicate<Members>::name), ...);
         }
-        sql += " ORDER BY " + key_ + " LIMIT ? OFFSET ?";
+        sql += " ORDER BY " + key_ + " LIMIT " + parameter(sizeof...(Members) + 1) +
+               " OFFSET " + parameter(sizeof...(Members) + 2);
         const auto rows = co_await executeSql(std::move(sql), std::move(predicates.value)..., limit, offset);
         std::vector<Record> records;
         records.reserve(rows.size());
@@ -253,26 +204,11 @@ private:
 
     template <typename... Args>
     drogon::Task<drogon::orm::Result> execute(std::string sql, Args... args) const {
-        auto* caller = trantor::EventLoop::getEventLoopOfCurrentThread();
-        std::optional<drogon::orm::Result> result;
-        std::exception_ptr error;
-        try {
-            result.emplace(co_await db_->execSqlCoro(sql, args...));
-        } catch (...) {
-            error = std::current_exception();
+        if (const auto gate = database_->queryGate()) {
+            const auto lock = co_await gate->get().scoped_lock();
+            co_return co_await detail::executeOn(database_->client(), std::move(sql), std::move(args)...);
         }
-        if (caller && !caller->isInLoopThread()) co_await drogon::switchThreadCoro(caller);
-        if (error) std::rethrow_exception(error);
-        co_return std::move(*result);
-    }
-
-    static std::string quoteIdentifier(std::string_view identifier) {
-        std::string quoted = "\"";
-        for (const char character : identifier) {
-            if (character == '"') quoted += '"';
-            quoted += character;
-        }
-        return quoted + '"';
+        co_return co_await detail::executeOn(database_->client(), std::move(sql), std::move(args)...);
     }
 
     static std::string snakeCase(std::string_view name) {
@@ -288,9 +224,9 @@ private:
         return column;
     }
 
-    drogon::orm::DbClientPtr db_;
-    std::string tableName_, table_, key_, select_, insert_, update_, createTable_;
-    std::vector<Column> schema_;
+    DatabaseBackendPtr database_;
+    std::string tableName_, table_, key_, select_, insert_, update_;
+    std::vector<DatabaseColumn> schema_;
 };
 
 }
