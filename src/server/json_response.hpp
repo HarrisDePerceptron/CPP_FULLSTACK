@@ -1,12 +1,14 @@
 #pragma once
 
+#include "app_namespace.hpp"
+
 #include <drogon/HttpResponse.h>
 #include <glaze/glaze.hpp>
 
 #include <string_view>
 #include <utility>
 
-namespace hello {
+namespace APP_NAMESPACE {
 
 template<class Payload>
 drogon::HttpResponsePtr jsonResponse(const Payload& payload,

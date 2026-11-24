@@ -1,5 +1,7 @@
 #pragma once
 
+#include "app_namespace.hpp"
+
 #include <trantor/net/EventLoop.h>
 
 #include <condition_variable>
@@ -15,7 +17,7 @@
 #include <utility>
 #include <vector>
 
-namespace hello {
+namespace APP_NAMESPACE {
 
 class WorkersBusy : public std::runtime_error {
 public:

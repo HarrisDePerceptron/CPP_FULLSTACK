@@ -1,11 +1,13 @@
 #pragma once
 
+#include "app_namespace.hpp"
+
 #include <sodium.h>
 
 #include <array>
 #include <string>
 
-namespace hello {
+namespace APP_NAMESPACE {
 
 template<std::size_t Bytes>
 std::string randomHex() {

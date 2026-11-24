@@ -1,3 +1,4 @@
+#include "app_namespace.hpp"
 #include "tokens.hpp"
 
 #include <glaze/glaze.hpp>
@@ -8,10 +9,10 @@
 #include <cstdint>
 #include <stdexcept>
 
-namespace hello {
+namespace APP_NAMESPACE {
 namespace {
 
-constexpr auto issuer = "hello-demo";
+constexpr auto issuer = "app-template";
 
 struct GlazeTraits {
     using value_type = glz::generic_i64;

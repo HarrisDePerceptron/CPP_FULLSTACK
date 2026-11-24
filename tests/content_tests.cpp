@@ -1,4 +1,5 @@
-#include "content.hpp"
+#include "app_namespace.hpp"
+#include "services/content_client.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -14,7 +15,7 @@
 #include <thread>
 
 namespace {
-using namespace hello;
+using namespace APP_NAMESPACE;
 using namespace std::chrono_literals;
 
 class LocalResponse {

@@ -1,4 +1,4 @@
-#include "server.hpp"
+#include "server/server.hpp"
 
 #include <cstdio>
 #include <exception>
@@ -6,10 +6,12 @@
 #include <print>
 
 int main() {
-    try {
-        return hello::serve(std::filesystem::current_path());
-    } catch (const std::exception& error) {
-        std::println(stderr, "Startup failed: {}", error.what());
-        return 1;
-    }
+  try {
+
+    return APP_NAMESPACE::serve(std::filesystem::current_path());
+
+  } catch (const std::exception &error) {
+    std::println(stderr, "Startup failed: {}", error.what());
+    return 1;
+  }
 }

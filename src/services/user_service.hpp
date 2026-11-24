@@ -1,27 +1,32 @@
 #pragma once
 
+#include "app_namespace.hpp"
+
+#include "db/user_dao.hpp"
+
 #include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
 
-namespace hello {
+namespace APP_NAMESPACE {
 
 struct Credentials {
     std::string username;
     std::string password;
 };
 
-class Users {
+class UserService {
 public:
-    explicit Users(std::filesystem::path database) : database_(std::move(database)) {}
+    explicit UserService(std::filesystem::path database) : dao_(std::move(database)) {}
 
     std::optional<Credentials> seedDemo() const;
+    void configureDemo(std::string_view username, std::string_view password) const;
     bool authenticate(std::string_view username, std::string_view password) const;
 
 private:
-    std::filesystem::path database_;
+    UserDao dao_;
 };
 
 }

@@ -1,9 +1,10 @@
-#include "content.hpp"
+#include "app_namespace.hpp"
+#include "content_client.hpp"
 
 #include <cpr/cpr.h>
 #include <simdjson.h>
 
-namespace hello {
+namespace APP_NAMESPACE {
 
 std::expected<Content, ContentError> fetchContent(std::string_view url,
                                                  std::chrono::milliseconds timeout) {

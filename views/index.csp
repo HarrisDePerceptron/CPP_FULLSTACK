@@ -3,15 +3,15 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Hello server demo</title>
+    <title>App server demo</title>
     <link rel="stylesheet" href="/public/demo.css">
     <script defer src="/public/app.js"></script>
 </head>
 <body class="bg-sheet text-ink antialiased">
     <main class="mx-auto max-w-6xl px-5 py-8 sm:px-10 sm:py-12">
         <header class="mb-7 border-b border-rule pb-7">
-            <h1 class="font-mono text-3xl font-bold tracking-tight sm:text-5xl">Hello server demo</h1>
-            <p class="mt-3 max-w-xl text-muted">Try the public routes, sign in with the demo credentials from your server terminal, and upload a file.</p>
+            <h1 class="font-mono text-3xl font-bold tracking-tight sm:text-5xl">App server demo</h1>
+            <p class="mt-3 max-w-xl text-muted">Try the public routes, sign in with the demo credentials from your configuration or server terminal, and upload a file.</p>
         </header>
 
         <div class="grid gap-5 lg:grid-cols-[1fr_1.1fr]">
@@ -19,7 +19,7 @@
                 <section class="panel" aria-labelledby="public-heading">
                     <h2 id="public-heading" class="text-xl font-semibold">Public routes</h2>
                     <div class="mt-4 flex flex-wrap gap-2">
-                        <button class="action" id="greet" type="button">Get greeting</button>
+                        <button class="action" id="check-status" type="button">Check server status</button>
                         <button class="secondary" id="fetch-content" type="button">Fetch sample content</button>
                     </div>
                 </section>
@@ -46,7 +46,7 @@
 
                 <section class="panel" aria-labelledby="upload-heading">
                     <h2 id="upload-heading" class="text-xl font-semibold">Upload a file</h2>
-                    <p id="upload-hint" class="mt-2 text-sm text-muted">PDF, PNG, JPEG, GIF or WebP, up to 10 MiB. Uploaded files get a public download link.</p>
+                    <p id="upload-hint" class="mt-2 text-sm text-muted">Sign in and choose a PDF, PNG, JPEG, GIF or WebP up to 10 MiB. Uploaded files get a public download link.</p>
                     <form id="upload" class="mt-4 space-y-3">
                         <label class="label">File
                             <input name="file" type="file" class="control" accept="application/pdf,image/png,image/jpeg,image/gif,image/webp" aria-describedby="upload-hint" required>
@@ -67,6 +67,9 @@
                 </p>
             </section>
         </div>
+        <footer class="mt-8 border-t border-rule pt-4 text-sm text-muted">
+            Server time <span>[[ server_time ]]</span>
+        </footer>
     </main>
 </body>
 </html>

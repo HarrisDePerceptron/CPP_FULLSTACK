@@ -1,5 +1,7 @@
 #pragma once
 
+#include "app_namespace.hpp"
+
 #include "config.hpp"
 
 #include <chrono>
@@ -8,7 +10,7 @@
 #include <string_view>
 #include <utility>
 
-namespace hello {
+namespace APP_NAMESPACE {
 
 class Logger {
 public:

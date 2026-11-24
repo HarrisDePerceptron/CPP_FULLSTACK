@@ -1,5 +1,6 @@
+#include "app_namespace.hpp"
 #include "uploads.hpp"
-#include "random.hpp"
+#include "utils/random.hpp"
 
 #include <unistd.h>
 
@@ -8,7 +9,7 @@
 #include <stdexcept>
 #include <system_error>
 
-namespace hello {
+namespace APP_NAMESPACE {
 namespace {
 
 constexpr UploadType pdf{"pdf", "application/pdf"};

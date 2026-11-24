@@ -1,6 +1,6 @@
 @import "tailwindcss" source(none);
-@source "../public/index.html";
-@source "../public/app.js";
+@source "../views/index.csp";
+@source "./app.js";
 
 @theme {
     --color-ink: #182628;

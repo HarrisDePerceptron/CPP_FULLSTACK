@@ -1,12 +1,14 @@
 #pragma once
 
+#include "app_namespace.hpp"
+
 #include <chrono>
 #include <cstdint>
 #include <expected>
 #include <string>
 #include <string_view>
 
-namespace hello {
+namespace APP_NAMESPACE {
 
 struct Content {
     std::int64_t id;

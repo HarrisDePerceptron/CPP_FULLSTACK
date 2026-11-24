@@ -1,15 +1,22 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
-let token = null;
+const uploadForm = $("upload");
+const uploadFile = uploadForm.elements.file;
+let signedIn = false;
 let busy = false;
 
-function setSession(accessToken, username) {
-    token = accessToken;
-    $("session-status").textContent = token ? `Signed in as ${username}` : "Signed out";
-    for (const id of ["whoami", "logout", "upload-button"]) {
-        $(id).disabled = !token;
+function updateUploadButton() {
+    $("upload-button").disabled = !signedIn || uploadFile.files.length === 0 || busy;
+}
+
+function setSession(username) {
+    signedIn = Boolean(username);
+    $("session-status").textContent = signedIn ? `Signed in as ${username}` : "Signed out";
+    for (const id of ["whoami", "logout"]) {
+        $(id).disabled = !signedIn;
     }
+    updateUploadButton();
 }
 
 function showResult(status, body, downloadUrl) {
@@ -20,17 +27,19 @@ function showResult(status, body, downloadUrl) {
     else $("download").removeAttribute("href");
 }
 
-async function request(path, options = {}, protectedRoute = false, onSuccess) {
+async function request(path, options = {}, protectedRoute = false, onSuccess, restoringSession = false) {
     if (busy) return;
     busy = true;
-    showResult(`${options.method ?? "GET"} ${path}`, "Waiting for server…");
+    updateUploadButton();
+    if (!restoringSession) showResult(`${options.method ?? "GET"} ${path}`, "Waiting for server…");
     try {
-        const headers = new Headers(options.headers);
-        if (protectedRoute && token) headers.set("Authorization", `Bearer ${token}`);
-        const response = await fetch(path, { ...options, headers });
+        const response = await fetch(path, options);
+        if (protectedRoute && response.status === 401) {
+            setSession(null);
+            if (restoringSession) return;
+        }
         const type = response.headers.get("content-type") ?? "";
         const body = type.includes("application/json") ? await response.json() : await response.text();
-        if (protectedRoute && response.status === 401) setSession(null);
         const status = `${response.status} ${response.statusText}`;
         if (response.ok && onSuccess) {
             onSuccess(status, body);
@@ -41,16 +50,18 @@ async function request(path, options = {}, protectedRoute = false, onSuccess) {
         showResult("Request failed", "Could not complete the request.");
     } finally {
         busy = false;
+        updateUploadButton();
     }
 }
 
-$("greet").addEventListener("click", () => request("/hello"));
+$("check-status").addEventListener("click", () => request("/status"));
 $("fetch-content").addEventListener("click", () => request("/api/content"));
 $("whoami").addEventListener("click", () => request("/api/me", {}, true));
 $("logout").addEventListener("click", () => {
-    if (busy) return;
-    setSession(null);
-    showResult("Signed out", "The page has cleared the session.");
+    request("/api/logout", { method: "POST" }, false, () => {
+        setSession(null);
+        showResult("Signed out", "The server cleared the session cookie.");
+    });
 });
 
 $("login").addEventListener("submit", (event) => {
@@ -63,15 +74,18 @@ $("login").addEventListener("submit", (event) => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),
     }, false, (status, body) => {
-        setSession(body.access_token, username);
-        showResult(status, { token_type: body.token_type, expires_in: body.expires_in });
+        setSession(username);
+        showResult(status, { username, expires_in: body.expires_in });
     });
     form.elements.password.value = "";
 });
 
-$("upload").addEventListener("submit", (event) => {
+uploadFile.addEventListener("change", updateUploadButton);
+updateUploadButton();
+
+uploadForm.addEventListener("submit", (event) => {
     event.preventDefault();
-    if (busy || !token) return;
+    if (busy || !signedIn || uploadFile.files.length === 0) return;
     const data = new FormData(event.currentTarget);
     if (data.get("file").size > 10 * 1024 * 1024) {
         showResult("File too large", "Choose a file up to 10 MiB.");
@@ -83,3 +97,5 @@ $("upload").addEventListener("submit", (event) => {
         showResult(status, body, publicUrl);
     });
 });
+
+request("/api/me", {}, true, (_status, body) => setSession(body.username), true);

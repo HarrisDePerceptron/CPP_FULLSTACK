@@ -1,12 +1,14 @@
 #pragma once
 
+#include "app_namespace.hpp"
+
 #include <chrono>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
 
-namespace hello {
+namespace APP_NAMESPACE {
 
 class Tokens {
 public:

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "app_namespace.hpp"
+
 #include <cstddef>
 #include <expected>
 #include <filesystem>
@@ -8,7 +10,7 @@
 #include <string_view>
 #include <utility>
 
-namespace hello {
+namespace APP_NAMESPACE {
 
 inline constexpr std::size_t maxUploadBytes = 10 * 1024 * 1024;
 enum class UploadError { empty, tooLarge, unsupported };
