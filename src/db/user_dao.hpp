@@ -2,6 +2,8 @@
 
 #include "app_namespace.hpp"
 
+#include "base_dao.hpp"
+
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -10,18 +12,20 @@
 
 namespace APP_NAMESPACE {
 
-class UserDao {
+struct UserRecord {
+    std::string username;
+    std::string passwordHash;
+    std::optional<std::string> seedKey;
+};
+
+class UserDao : public BaseDao<UserRecord, std::string> {
 public:
-    explicit UserDao(std::filesystem::path database) : database_(std::move(database)) {}
+    explicit UserDao(std::filesystem::path database);
 
-    void initialize() const;
-    bool hasDemo() const;
-    bool insertDemo(std::string_view username, std::string_view passwordHash) const;
-    void replaceDemo(std::string_view username, std::string_view passwordHash) const;
-    std::optional<std::string> passwordHash(std::string_view username) const;
-
-private:
-    std::filesystem::path database_;
+    drogon::Task<> initialize() const;
+    drogon::Task<bool> hasDemo() const;
+    drogon::Task<bool> insertDemo(std::string username, std::string passwordHash) const;
+    drogon::Task<> replaceDemo(std::string username, std::string passwordHash) const;
 };
 
 }

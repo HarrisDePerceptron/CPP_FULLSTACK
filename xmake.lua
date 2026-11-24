@@ -22,7 +22,7 @@ if is_host("macosx") then
 	add_requireconfs("**.m4", { version = ">=1.4.16", override = true })
 end
 
-add_requires("drogon v1.9.12", { configs = { cpp20 = true } })
+add_requires("drogon v1.9.12", { configs = { cpp20 = true, sqlite3 = true } })
 add_requires("cpr 1.12.0")
 if is_plat("macosx") then
 	-- Keep libcurl's OpenSSL 3 inside its shared library so Trantor can link OpenSSL 1.1.
@@ -30,7 +30,7 @@ if is_plat("macosx") then
 	add_requireconfs("cpr.libcurl.openssl3", { private = true })
 end
 add_requires("dotenv-cpp 9275210b8abf1a551fb81e0ba45866286d764acd", "glaze v7.0.2", "jwt-cpp 0.7.2")
-add_requires("simdjson", "sqlite3", "libsodium", "catch2 3.x")
+add_requires("simdjson", "libsodium", "catch2 3.x")
 
 option("app_namespace")
 set_default("App")
@@ -55,24 +55,24 @@ add_options("app_namespace")
 add_defines("APP_NAMESPACE=$(app_namespace)", { public = true })
 add_files("src/**.cpp|main.cpp")
 add_includedirs("src", { public = true })
-add_packages("drogon", "cpr", "dotenv-cpp", "glaze", "jwt-cpp", "simdjson", "sqlite3", "libsodium", { public = true })
+add_packages("drogon", "cpr", "dotenv-cpp", "glaze", "jwt-cpp", "simdjson", "libsodium", { public = true })
 
 rule("drogon.view")
 set_extensions(".csp")
 before_buildcmd_file(function(target, batchcmds, sourcefile, opt)
-    local ctl = path.join(target:pkg("drogon"):installdir(), "bin", "drogon_ctl")
-    local output = path.join(target:autogendir(), "views")
-    local generated = path.join(output, "AppViews_" .. path.basename(sourcefile) .. ".cc")
-    local object = target:objectfile(generated)
-    table.insert(target:objectfiles(), object)
+	local ctl = path.join(target:pkg("drogon"):installdir(), "bin", "drogon_ctl")
+	local output = path.join(target:autogendir(), "views")
+	local generated = path.join(output, "AppViews_" .. path.basename(sourcefile) .. ".cc")
+	local object = target:objectfile(generated)
+	table.insert(target:objectfiles(), object)
 
-    batchcmds:show_progress(opt.progress, "compiling view %s", sourcefile)
-    batchcmds:mkdir(output)
-    batchcmds:vrunv(ctl, {"create", "view", path(sourcefile), "-o", path(output), "-n", "AppViews"})
-    batchcmds:compile(generated, object)
-    batchcmds:add_depfiles(sourcefile, ctl)
-    batchcmds:set_depmtime(os.mtime(object))
-    batchcmds:set_depcache(target:dependfile(object))
+	batchcmds:show_progress(opt.progress, "compiling view %s", sourcefile)
+	batchcmds:mkdir(output)
+	batchcmds:vrunv(ctl, { "create", "view", path(sourcefile), "-o", path(output), "-n", "AppViews" })
+	batchcmds:compile(generated, object)
+	batchcmds:add_depfiles(sourcefile, ctl)
+	batchcmds:set_depmtime(os.mtime(object))
+	batchcmds:set_depcache(target:dependfile(object))
 end)
 rule_end()
 

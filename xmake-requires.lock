@@ -62,7 +62,7 @@
         ["dotenv-cpp 9275210b8abf1a551fb81e0ba45866286d764acd#f56260b5"] = {
             version = "9275210b8abf1a551fb81e0ba45866286d764acd"
         },
-        ["drogon v1.9.12#6a99813e"] = {
+        ["drogon v1.9.12#3cee8ea1"] = {
             repo = {
                 branch = "master",
                 commit = "9bf30fdddc25f58bf7c966da383c8659246e0a3d",

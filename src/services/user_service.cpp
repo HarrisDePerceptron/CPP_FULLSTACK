@@ -22,22 +22,25 @@ std::string hashPassword(std::string_view password) {
 
 
 std::optional<Credentials> UserService::seedDemo() const {
-    dao_.initialize();
-    if (dao_.hasDemo()) return std::nullopt;
+    drogon::sync_wait(dao_.initialize());
+    if (drogon::sync_wait(dao_.hasDemo())) return std::nullopt;
 
     Credentials credentials{"demo-" + randomHex<6>(), randomHex<16>()};
-    if (!dao_.insertDemo(credentials.username, hashPassword(credentials.password))) return std::nullopt;
+    if (!drogon::sync_wait(dao_.insertDemo(credentials.username, hashPassword(credentials.password)))) return std::nullopt;
     return credentials;
 }
 
 void UserService::configureDemo(std::string_view username, std::string_view password) const {
-    dao_.initialize();
-    dao_.replaceDemo(username, hashPassword(password));
+    drogon::sync_wait(dao_.initialize());
+    drogon::sync_wait(dao_.replaceDemo(std::string(username), hashPassword(password)));
 }
 
-bool UserService::authenticate(std::string_view username, std::string_view password) const {
-    const auto hash = dao_.passwordHash(username);
-    return hash && crypto_pwhash_str_verify(hash->c_str(), password.data(), password.size()) == 0;
+drogon::Task<bool> UserService::authenticate(std::string username, std::string password, Workers& workers) const {
+    const auto user = co_await dao_.findById(std::move(username));
+    if (!user) co_return false;
+    co_return co_await workers.submit([&] {
+        return crypto_pwhash_str_verify(user->passwordHash.c_str(), password.data(), password.size()) == 0;
+    });
 }
 
 }

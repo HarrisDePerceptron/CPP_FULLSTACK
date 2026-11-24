@@ -45,9 +45,7 @@ Task<HttpResponsePtr> login(std::shared_ptr<Services> services, HttpRequestPtr r
         co_return jsonError(k400BadRequest, "Send a JSON username and password.");
     }
 
-    if (!co_await services->workers.submit([&] {
-        return services->users.authenticate(credentials.username, credentials.password);
-    })) {
+    if (!co_await services->users.authenticate(credentials.username, credentials.password, services->workers)) {
         co_return jsonError(k401Unauthorized, "Invalid username or password.");
     }
 

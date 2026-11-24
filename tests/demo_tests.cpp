@@ -1,4 +1,5 @@
 #include "app_namespace.hpp"
+#include "db/row_to_struct.hpp"
 #include "utils/config.hpp"
 #include "server/json_response.hpp"
 #include "server/auth/tokens.hpp"
@@ -7,6 +8,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <sodium.h>
+#include <trantor/net/EventLoopThread.h>
 #include <unistd.h>
 
 #include <cstdlib>
@@ -18,6 +20,16 @@
 #include <stdexcept>
 #include <string_view>
 #include <tuple>
+
+namespace APP_NAMESPACE {
+
+struct SampleRow {
+    int count;
+    std::optional<std::string> label;
+};
+
+}
+
 
 namespace {
 using namespace APP_NAMESPACE;
@@ -56,6 +68,82 @@ private:
     const char* name_;
     std::optional<std::string> old_;
 };
+
+bool authenticate(const UserService& users, std::string username, std::string password) {
+    trantor::EventLoopThread thread;
+    thread.run();
+    Workers workers;
+    const auto verify = [&]() -> drogon::Task<bool> {
+        co_await drogon::switchThreadCoro(thread.getLoop());
+        co_return co_await users.authenticate(std::move(username), std::move(password), workers);
+    };
+    return drogon::sync_wait(verify());
+}
+
+TEST_CASE("Base DAO provides asynchronous CRUD and bound SQL", "[users]") {
+    TemporaryDirectory temporary;
+    const UserDao users(temporary.path() / "crud.sqlite3");
+    drogon::sync_wait(users.initialize());
+    CHECK(drogon::sync_wait(users.count()) == 0);
+    CHECK_FALSE(drogon::sync_wait(users.findById("missing")));
+    drogon::sync_wait(users.create({"bob", "hash", std::nullopt}));
+    drogon::sync_wait(users.create({"alice", "hash", "seed"}));
+    CHECK_THROWS(drogon::sync_wait(users.create({"bob", "other", std::nullopt})));
+    CHECK_THROWS_AS(drogon::sync_wait(users.find(0)), std::invalid_argument);
+    const auto page = drogon::sync_wait(users.find(1, 1));
+    REQUIRE(page.size() == 1);
+    CHECK(page[0].username == "bob");
+    CHECK_FALSE(page[0].seedKey);
+    const auto alice = drogon::sync_wait(users.findById("alice"));
+    REQUIRE(alice);
+    CHECK(alice->seedKey == "seed");
+
+    CHECK_FALSE(drogon::sync_wait(users.update({"missing", "new hash", std::nullopt})));
+    CHECK_THROWS(drogon::sync_wait(users.update({"bob", "conflict", "seed"})));
+    CHECK(drogon::sync_wait(users.update({"alice", "new hash", std::nullopt})));
+    const auto updated = drogon::sync_wait(users.findById("alice"));
+    REQUIRE(updated);
+    CHECK(updated->passwordHash == "new hash");
+    CHECK_FALSE(updated->seedKey);
+    const auto bob = drogon::sync_wait(users.findById("bob"));
+    REQUIRE(bob);
+    CHECK(bob->passwordHash == "hash");
+    CHECK(drogon::sync_wait(users.count()) == 2);
+
+    trantor::EventLoopThread thread;
+    thread.run();
+    const auto checkLoop = [&]() -> drogon::Task<std::pair<bool, bool>> {
+        auto* loop = thread.getLoop();
+        co_await drogon::switchThreadCoro(loop);
+        const auto result = co_await users.executeSql("SELECT username FROM users WHERE username = ?", "alice");
+        const bool success = result.size() == 1 && loop->isInLoopThread();
+        try {
+            co_await users.executeSql("SELECT missing_column FROM users");
+        } catch (const std::exception&) {
+            co_return std::pair{success, loop->isInLoopThread()};
+        }
+        co_return std::pair{success, false};
+    };
+    const auto [success, error] = drogon::sync_wait(checkLoop());
+    CHECK(success);
+    CHECK(error);
+    CHECK(drogon::sync_wait(users.deleteById("alice")));
+    CHECK_FALSE(drogon::sync_wait(users.deleteById("alice")));
+    CHECK(drogon::sync_wait(users.count()) == 1);
+}
+
+TEST_CASE("Drogon rows map named columns and respect nullable members", "[users]") {
+    const auto db = drogon::orm::DbClient::newSqlite3Client("filename=:memory:", 1);
+    const auto result = db->execSqlSync("SELECT NULL AS label, 42 AS count, 'extra' AS ignored");
+    const auto row = rowToStruct<SampleRow>(result[0]);
+    CHECK(row.count == 42);
+    CHECK_FALSE(row.label);
+
+    const auto missing = db->execSqlSync("SELECT 42 AS count");
+    CHECK_THROWS(rowToStruct<SampleRow>(missing[0]));
+    const auto requiredNull = db->execSqlSync("SELECT NULL AS count, 'label' AS label");
+    CHECK_THROWS_AS(rowToStruct<SampleRow>(requiredNull[0]), std::runtime_error);
+}
 
 TEST_CASE("Listener settings resolve defaults, JSON, dotenv, and process overrides", "[config]") {
     TemporaryDirectory temporary;
@@ -142,7 +230,7 @@ TEST_CASE("An existing environment variable overrides .env", "[config]") {
 TEST_CASE("SQLite persists only the hashed demo credential", "[users]") {
     REQUIRE(sodium_init() >= 0);
     TemporaryDirectory temporary;
-    const auto path = temporary.path() / "users.sqlite3";
+    const auto path = temporary.path() / "users with spaces.sqlite3";
     const UserService firstRun(path);
     const auto credentials = firstRun.seedDemo();
     REQUIRE(credentials.has_value());
@@ -151,9 +239,9 @@ TEST_CASE("SQLite persists only the hashed demo credential", "[users]") {
 
     const UserService secondRun(path);
     CHECK_FALSE(secondRun.seedDemo());
-    CHECK(secondRun.authenticate(credentials->username, credentials->password));
-    CHECK_FALSE(secondRun.authenticate(credentials->username, "wrong"));
-    CHECK_FALSE(secondRun.authenticate("missing", credentials->password));
+    CHECK(authenticate(secondRun, credentials->username, credentials->password));
+    CHECK_FALSE(authenticate(secondRun, credentials->username, "wrong"));
+    CHECK_FALSE(authenticate(secondRun, "missing", credentials->password));
 
     std::ifstream database(path, std::ios::binary);
     const std::string raw{std::istreambuf_iterator<char>(database), {}};
@@ -170,13 +258,13 @@ TEST_CASE("Configured demo credentials replace a generated account and survive r
     REQUIRE(previous);
 
     users.configureDemo("test_user", "test_password");
-    CHECK_FALSE(users.authenticate(previous->username, previous->password));
-    CHECK(users.authenticate("test_user", "test_password"));
+    CHECK_FALSE(authenticate(users, previous->username, previous->password));
+    CHECK(authenticate(users, "test_user", "test_password"));
 
     const UserService reopened(path);
     reopened.configureDemo("test_user", "new_password");
-    CHECK_FALSE(reopened.authenticate("test_user", "test_password"));
-    CHECK(reopened.authenticate("test_user", "new_password"));
+    CHECK_FALSE(authenticate(reopened, "test_user", "test_password"));
+    CHECK(authenticate(reopened, "test_user", "new_password"));
     CHECK_FALSE(reopened.seedDemo());
 }
 
@@ -197,7 +285,7 @@ TEST_CASE("Concurrent demo seeding returns credentials to exactly one caller", "
     const auto& credentials = firstResult ? *firstResult : *secondResult;
     const UserService reopened(path);
     CHECK_FALSE(reopened.seedDemo());
-    CHECK(reopened.authenticate(credentials.username, credentials.password));
+    CHECK(authenticate(reopened, credentials.username, credentials.password));
 }
 
 TEST_CASE("Glaze JWT serialization and verification preserve signed claims", "[jwt]") {
