@@ -16,6 +16,25 @@
 
 namespace APP_NAMESPACE {
 
+class DatabaseBackend;
+
+class DaoTransaction {
+public:
+    virtual ~DaoTransaction() = default;
+    DaoTransaction(const DaoTransaction&) = delete;
+    DaoTransaction& operator=(const DaoTransaction&) = delete;
+
+    virtual const DatabaseBackend& backend() const = 0;
+    virtual const drogon::orm::DbClientPtr& client() const = 0;
+
+protected:
+    DaoTransaction() = default;
+};
+
+using TransactionCallback = std::function<drogon::Task<>(DaoTransaction&)>;
+
+using CompositeUniqueness = std::vector<std::vector<std::string>>;
+
 class DatabaseBackend {
 public:
     virtual ~DatabaseBackend() = default;
@@ -23,8 +42,9 @@ public:
     virtual std::string parameter(std::size_t index) const = 0;
     virtual std::string containsText(std::string_view column, std::size_t index) const = 0;
     virtual std::string nullSafeEqual(std::string_view column, std::size_t index) const = 0;
+    virtual drogon::Task<> transaction(TransactionCallback work) = 0;
     virtual drogon::Task<> initializeTable(
-        std::string table, std::vector<DatabaseColumn> columns) = 0;
+        std::string table, std::vector<DatabaseColumn> columns, CompositeUniqueness composite) = 0;
     virtual std::optional<std::reference_wrapper<drogon::Mutex>> queryGate() const { return std::nullopt; }
 };
 

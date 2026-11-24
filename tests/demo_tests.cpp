@@ -57,6 +57,38 @@ struct PostFields {
 
 using PostRecord = DaoRecord<PostFields>;
 
+struct ComposedFields {
+    static constexpr std::string_view table_name = "composed_records";
+
+    Indexed<Unique<Default<std::string, SqlText{"first"}>>> label;
+    Indexed<Unique<Foreign<UserRecord>>> owner_id;
+};
+
+using ComposedRecord = DaoRecord<ComposedFields>;
+
+struct MembershipFields {
+    static constexpr std::string_view table_name = "memberships";
+
+    RequiredForeign<IndexedRecord> project_id;
+    RequiredForeign<UserRecord> user_id;
+
+    static constexpr auto constraints = CompositeUnique<
+        &MembershipFields::project_id, &MembershipFields::user_id>{};
+};
+
+struct AssignmentFields {
+    static constexpr std::string_view table_name = "assignments";
+
+    std::string project;
+    std::string person;
+    std::string role;
+
+    static constexpr auto constraints = std::tuple{
+        CompositeUnique<&AssignmentFields::project, &AssignmentFields::person>{},
+        CompositeUnique<&AssignmentFields::person, &AssignmentFields::role>{}
+    };
+};
+
 enum class PostStatus { draft, published };
 enum class ChangedStatus { draft, archived };
 
@@ -179,6 +211,189 @@ public:
 private:
     explicit PostDao(DatabaseBackendPtr database) : BaseDao(std::move(database)) {}
 };
+
+template <typename Fields>
+class ConstrainedDao final : public BaseDao<ConstrainedDao<Fields>, DaoRecord<Fields>> {
+    using Base = BaseDao<ConstrainedDao<Fields>, DaoRecord<Fields>>;
+
+public:
+    static drogon::Task<ConstrainedDao> init(DatabaseBackendPtr database) {
+        return Base::finishInitialization(ConstrainedDao(std::move(database)));
+    }
+
+private:
+    explicit ConstrainedDao(DatabaseBackendPtr database) : Base(std::move(database)) {}
+};
+
+template <auto... Members>
+concept SupportsCompositeUnique = requires { typename CompositeUnique<Members...>; };
+
+static_assert(!SupportsCompositeUnique<&MembershipFields::project_id>);
+static_assert(!SupportsCompositeUnique<&MembershipFields::project_id, &MembershipFields::project_id>);
+static_assert(!SupportsCompositeUnique<&MembershipFields::project_id, &UserRecord::username>);
+
+TEST_CASE("Composite uniqueness prevents duplicate pivot pairs without replacing the generated ID", "[users]") {
+    const auto database = openTestDatabase(":memory:");
+    const auto users = drogon::sync_wait(UserDao::init(database));
+    const auto projects = drogon::sync_wait(IndexedDao::init(database));
+    const auto memberships = drogon::sync_wait(ConstrainedDao<MembershipFields>::init(database));
+    const auto alice = drogon::sync_wait(users.create({{"alice", "hash"}}));
+    const auto bob = drogon::sync_wait(users.create({{"bob", "hash"}}));
+    drogon::sync_wait(projects.create({{7, "first"}}));
+    IndexedRecord second{{8, "second"}};
+    second.label.value.value = "different";
+    drogon::sync_wait(projects.create(second));
+    const auto id = drogon::sync_wait(memberships.create({{7, alice}}));
+    CHECK(drogon::sync_wait(memberships.findById(id)));
+    CHECK(drogon::sync_wait(memberships.create({{7, bob}})) > id);
+    CHECK(drogon::sync_wait(memberships.create({{8, alice}})) > id);
+    CHECK_THROWS(drogon::sync_wait(memberships.create({{7, alice}})));
+
+    const auto assignments = drogon::sync_wait(ConstrainedDao<AssignmentFields>::init(database));
+    drogon::sync_wait(assignments.create({{"website", "alice", "owner"}}));
+    CHECK_THROWS(drogon::sync_wait(assignments.create({{"website", "alice", "editor"}})));
+    CHECK_THROWS(drogon::sync_wait(assignments.create({{"docs", "alice", "owner"}})));
+    CHECK(drogon::sync_wait(assignments.create({{"docs", "alice", "editor"}})) > 0);
+}
+
+TEST_CASE("Composite uniqueness rolls back on duplicates and reuses equivalent indexes", "[users]") {
+    const auto database = openTestDatabase(":memory:");
+    const auto& client = database->client();
+    client->execSqlSync("CREATE TABLE assignments (project TEXT NOT NULL, person TEXT NOT NULL, "
+                        "role TEXT NOT NULL, id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL)");
+    client->execSqlSync("INSERT INTO assignments (project, person, role) "
+                        "VALUES ('docs', 'alice', 'editor'), ('build', 'alice', 'editor')");
+    CHECK_THROWS(drogon::sync_wait(ConstrainedDao<AssignmentFields>::init(database)));
+    CHECK(client->execSqlSync("SELECT COUNT(*) FROM assignments")[0][0].as<int>() == 2);
+    CHECK(client->execSqlSync("SELECT name FROM pragma_table_info('assignments')").size() == 4);
+    CHECK(client->execSqlSync("SELECT name FROM pragma_index_list('assignments')").empty());
+
+    client->execSqlSync("DELETE FROM assignments WHERE project = 'build'");
+    client->execSqlSync("CREATE UNIQUE INDEX existing_assignment ON assignments(project, person)");
+    const auto dao = drogon::sync_wait(ConstrainedDao<AssignmentFields>::init(database));
+    const auto indexes = drogon::sync_wait(dao.executeSql(
+        "SELECT name FROM pragma_index_list('assignments') WHERE [unique] = 1"));
+    REQUIRE(indexes.size() == 2);
+    CHECK(std::any_of(indexes.begin(), indexes.end(), [](const auto& row) {
+        return row[0].template as<std::string>() == "existing_assignment";
+    }));
+    drogon::sync_wait(ConstrainedDao<AssignmentFields>::init(database));
+    CHECK(drogon::sync_wait(dao.findById(1)));
+}
+
+class ComposedDao final : public BaseDao<ComposedDao, ComposedRecord> {
+public:
+    static drogon::Task<ComposedDao> init(DatabaseBackendPtr database) {
+        return finishInitialization(ComposedDao(std::move(database)));
+    }
+
+private:
+    explicit ComposedDao(DatabaseBackendPtr database) : BaseDao(std::move(database)) {}
+};
+
+TEST_CASE("Nested field annotations preserve uniqueness and foreign loading", "[users]") {
+    const auto database = openTestDatabase(":memory:");
+    const auto users = drogon::sync_wait(UserDao::init(database));
+    const auto dao = drogon::sync_wait(ComposedDao::init(database));
+    const auto owner = drogon::sync_wait(users.create({{"owner", "hash"}}));
+    const auto id = drogon::sync_wait(dao.create({{{}, owner}}));
+    const auto record = drogon::sync_wait(dao.findById(id, withForeign<&ComposedRecord::owner_id>(users)));
+    REQUIRE(record);
+    CHECK(record->label.value.value.value == "first");
+    REQUIRE(record->owner_id.value.value.record());
+    CHECK(record->owner_id.value.value.record()->id == owner);
+    CHECK_THROWS(drogon::sync_wait(dao.create({{"first", {}}})));
+    CHECK_THROWS(drogon::sync_wait(dao.create({{"other", owner}})));
+    CHECK_THROWS(drogon::sync_wait(dao.create({{"other", owner + 1}})));
+    CHECK(drogon::sync_wait(dao.create({{"other", {}}})) > id);
+    const auto indexes = drogon::sync_wait(dao.executeSql(
+        "SELECT 1 FROM pragma_index_list('composed_records') WHERE origin = 'c'"));
+    CHECK(indexes.size() == 2); // Only the two timestamp indexes are ordinary indexes.
+}
+
+TEST_CASE("DAO transactions commit or roll back typed operations across tables", "[users]") {
+    const auto database = openTestDatabase(":memory:");
+    const auto users = drogon::sync_wait(UserDao::init(database));
+    const auto reviewers = drogon::sync_wait(IndexedDao::init(database));
+    const auto posts = drogon::sync_wait(PostDao::init(database));
+    const auto other = drogon::sync_wait(UserDao::init(openTestDatabase(":memory:")));
+    std::int64_t author_id = 0;
+    drogon::sync_wait(database->transaction([&](DaoTransaction& tx) -> drogon::Task<> {
+        author_id = co_await users.create(tx, {{"author", "hash"}});
+        auto post_id = co_await posts.create(tx, {{"post", author_id, {}}});
+        const auto discarded = co_await posts.create(tx, {{"discard", author_id, {}}});
+        CHECK(co_await posts.deleteById(tx, discarded));
+        auto post = co_await posts.findById(tx, post_id, withForeign<&PostRecord::author_id>(users));
+        REQUIRE(post);
+        REQUIRE(post->author_id.value.record());
+        post->title = "edited";
+        CHECK(co_await posts.update(tx, *post));
+        const auto rows = co_await posts.find(tx, 1, 0, where<&PostRecord::title>("edited"));
+        CHECK(rows.size() == 1);
+        CHECK(co_await posts.count(tx, where<&PostRecord::author_id>(author_id)) == 1);
+        const auto raw = co_await posts.executeSql(tx, "SELECT title FROM posts WHERE id = ?", post_id);
+        CHECK(raw[0][0].as<std::string>() == "edited");
+    }));
+    CHECK(drogon::sync_wait(users.findById(author_id)));
+    CHECK(drogon::sync_wait(posts.count(where<&PostRecord::title>("edited"))) == 1);
+    CHECK_THROWS(drogon::sync_wait(database->transaction([&](DaoTransaction& tx) -> drogon::Task<> {
+        const auto rolled_id = co_await users.create(tx, {{"rolled-back", "hash"}});
+        co_await posts.create(tx, {{"rolled-back", rolled_id, {}}});
+        co_await posts.create(tx, {{"invalid", 999, {}}});
+    })));
+    CHECK_FALSE(drogon::sync_wait(users.findByUsername("rolled-back")));
+    CHECK(drogon::sync_wait(posts.count(where<&PostRecord::title>("rolled-back"))) == 0);
+    CHECK_THROWS_WITH(drogon::sync_wait(database->transaction([&](DaoTransaction& tx) -> drogon::Task<> {
+        co_await other.findById(tx, author_id);
+    })), "DAO and transaction must use the same database backend");
+}
+
+TEST_CASE("A competing DAO write waits for rollback and commits independently", "[users]") {
+    const auto database = openTestDatabase(":memory:");
+    const auto users = drogon::sync_wait(UserDao::init(database));
+    std::promise<void> inserted;
+    std::promise<void> release;
+    auto transaction = std::async(std::launch::async, [&] {
+        runOnEventLoop(database->transaction([&](DaoTransaction& tx) -> drogon::Task<> {
+            co_await users.create(tx, {{"rolled-back", "hash"}});
+            inserted.set_value();
+            release.get_future().wait();
+            throw std::runtime_error("abort transaction");
+        }));
+    });
+    const auto ready = inserted.get_future().wait_for(2s);
+    if (ready != std::future_status::ready) {
+        release.set_value();
+        transaction.get();
+        FAIL("transaction did not reach its first write");
+    }
+
+    std::promise<void> started;
+    auto outside = std::async(std::launch::async, [&] {
+        const auto write = [&]() -> drogon::Task<std::int64_t> {
+            started.set_value();
+            co_return co_await users.create({{"outside", "hash"}});
+        };
+        return runOnEventLoop(write());
+    });
+    started.get_future().wait();
+    const auto blocked = outside.wait_for(50ms);
+    release.set_value();
+    CHECK(blocked == std::future_status::timeout);
+    CHECK_THROWS_WITH(transaction.get(), "abort transaction");
+    CHECK(drogon::sync_wait(users.findById(outside.get())));
+    CHECK_FALSE(drogon::sync_wait(users.findByUsername("rolled-back")));
+}
+
+TEST_CASE("A SQLite backend with a failed rollback is unavailable", "[users]") {
+    const auto database = openTestDatabase(":memory:");
+    const auto users = drogon::sync_wait(UserDao::init(database));
+    CHECK_THROWS(drogon::sync_wait(database->transaction([&](DaoTransaction& tx) -> drogon::Task<> {
+        co_await users.executeSql(tx, "ROLLBACK");
+        throw std::runtime_error("original failure");
+    })));
+    CHECK_THROWS_WITH(drogon::sync_wait(users.find(1)), "SQLite backend unavailable after failed rollback");
+}
 
 template <auto Member, typename TargetDao>
 concept SupportsForeignFind = requires(const PostDao& posts, const TargetDao& target) {

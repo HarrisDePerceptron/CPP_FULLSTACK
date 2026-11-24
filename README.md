@@ -182,6 +182,45 @@ drogon::Task<> databaseExample() {
 
 `where<Member>(value)` means equality. Use `eq`, `gt`, `gte`, `lt`, `lte`, `in`, or `contains` to name an operator. Separate filters combine with `AND`. `contains` matches literal, case-sensitive text. `negate(where<...>(...))` includes rows with `NULL` when the original filter excludes them.
 
+### Declare a unique pair
+
+For a many-to-many table, use `CompositeUnique` to prevent duplicates without replacing the generated ID.
+
+```cpp
+#include "db/user_dao.hpp"
+
+namespace APP_NAMESPACE {
+
+struct ProjectMemberFields {
+    static constexpr std::string_view table_name = "project_members";
+
+    RequiredForeign<ProjectRecord> project_id;
+    RequiredForeign<UserRecord> user_id;
+
+    static constexpr auto constraints = CompositeUnique<
+        &ProjectMemberFields::project_id,
+        &ProjectMemberFields::user_id>{};
+};
+using ProjectMemberRecord = DaoRecord<ProjectMemberFields>;
+
+}
+```
+
+Initialize the project and user DAOs first. The membership DAO creates or reuses a unique index on `(project_id, user_id)`. Each project can have many users, and each user can join many projects. Use a `std::tuple` of descriptors when a table needs multiple composite constraints.
+
+### Run a transaction
+
+Pass the transaction context to every DAO call inside the callback. The callback can use typed operations and bound SQL across DAOs on the same backend.
+
+```cpp
+co_await database->transaction([&](DaoTransaction& tx) -> drogon::Task<> {
+    const auto project_id = co_await projects.create(tx, {{"Website"}});
+    co_await tasks.create(tx, {{"Write docs", project_id}});
+});
+```
+
+The backend commits when the callback completes and rolls back if it throws. Use the context only inside the callback. On SQLite the callback holds the shared connection, so awaiting an ordinary DAO call that omits `tx` would wait for that same connection. Let the callback manage transaction boundaries, and use `executeSql(tx, sql, args...)` for custom queries within it.
+
 ## Configuration
 
 Edit [config.json](config.json) to change the listener or demo credentials. The shipped credentials are for local testing. [`.env.example`](.env.example) lists the optional `APP_*` settings, including `APP_JWT_SECRET` to keep existing sessions valid across server restarts. For listener settings, process environment variables take precedence over `.env` and JSON. The default C++ namespace is `App`. Set a different one with `xmake f --app_namespace=MyApp`.

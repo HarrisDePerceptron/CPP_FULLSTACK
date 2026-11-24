@@ -32,6 +32,22 @@ struct OrderBy {
     SortDirection direction;
 };
 
+template <auto First, auto... Rest>
+consteval bool validCompositeMembers() {
+    using Owner = typename DaoMember<decltype(First)>::Record;
+    if constexpr (!(std::same_as<Owner, typename DaoMember<decltype(Rest)>::Record> && ...)) {
+        return false;
+    } else {
+        constexpr std::array names{glz::get_name<First>(), glz::get_name<Rest>()...};
+        for (std::size_t i = 0; i < names.size(); ++i) {
+            for (std::size_t j = i + 1; j < names.size(); ++j) {
+                if (names[i] == names[j]) return false;
+            }
+        }
+        return true;
+    }
+}
+
 }
 
 template <auto... Members>
@@ -46,12 +62,19 @@ auto orderBy(SortDirection direction = SortDirection::asc) {
     return detail::OrderBy<Member>{direction};
 }
 
+template <auto... Members>
+    requires (sizeof...(Members) >= 2) &&
+             (std::is_member_object_pointer_v<decltype(Members)> && ...) &&
+             (detail::validCompositeMembers<Members...>())
+struct CompositeUnique {};
+
 struct DaoOptions { bool timestamps = true; };
 
 template <typename Derived, typename Record, DaoOptions Options = {}>
 class BaseDao {
     using Fields = typename Record::FieldRecord;
     using Id = typename Record::Id;
+    using TransactionScope = std::optional<std::reference_wrapper<const DaoTransaction>>;
 
     template <auto Member>
     static constexpr bool recordMember =
@@ -78,20 +101,38 @@ public:
     using RecordType = Record;
 
     drogon::Task<std::vector<Record>> find(std::int64_t limit = 100, std::int64_t offset = 0) const {
-        return findPage(limit, offset);
+        return findPage({}, limit, offset);
     }
 
     template <typename... Modifiers>
         requires (sizeof...(Modifiers) > 0) && (validModifier(std::type_identity<Modifiers>{}) && ...)
     drogon::Task<std::vector<Record>> find(Modifiers... modifiers) const {
-        return findPage(100, 0, std::move(modifiers)...);
+        return findPage({}, 100, 0, std::move(modifiers)...);
     }
 
     template <typename... Modifiers>
         requires (sizeof...(Modifiers) > 0) && (validModifier(std::type_identity<Modifiers>{}) && ...)
     drogon::Task<std::vector<Record>> find(
         std::int64_t limit, std::int64_t offset, Modifiers... modifiers) const {
-        return findPage(limit, offset, std::move(modifiers)...);
+        return findPage({}, limit, offset, std::move(modifiers)...);
+    }
+
+    drogon::Task<std::vector<Record>> find(
+        const DaoTransaction& tx, std::int64_t limit = 100, std::int64_t offset = 0) const {
+        return findPage(std::cref(tx), limit, offset);
+    }
+
+    template <typename... Modifiers>
+        requires (sizeof...(Modifiers) > 0) && (validModifier(std::type_identity<Modifiers>{}) && ...)
+    drogon::Task<std::vector<Record>> find(const DaoTransaction& tx, Modifiers... modifiers) const {
+        return findPage(std::cref(tx), 100, 0, std::move(modifiers)...);
+    }
+
+    template <typename... Modifiers>
+        requires (sizeof...(Modifiers) > 0) && (validModifier(std::type_identity<Modifiers>{}) && ...)
+    drogon::Task<std::vector<Record>> find(
+        const DaoTransaction& tx, std::int64_t limit, std::int64_t offset, Modifiers... modifiers) const {
+        return findPage(std::cref(tx), limit, offset, std::move(modifiers)...);
     }
 
     template <bool Nullable>
@@ -99,10 +140,18 @@ public:
         return field.load(*this);
     }
 
+    template <bool Nullable>
+    drogon::Task<bool> loadForeign(const DaoTransaction& tx, Foreign<Record, Nullable>& field) const {
+        transactionClient(tx);
+        return field.load(*this, tx);
+    }
+
     drogon::Task<std::optional<Record>> findById(Id id) const {
-        const auto rows = co_await executeSql(select_ + " WHERE " + key_ + " = " + parameter(1), std::move(id));
-        if (rows.empty()) co_return std::nullopt;
-        co_return mapRow(rows[0]);
+        return readById({}, std::move(id));
+    }
+
+    drogon::Task<std::optional<Record>> findById(const DaoTransaction& tx, Id id) const {
+        return readById(std::cref(tx), std::move(id));
     }
 
     template <auto... Members, typename... TargetDaos>
@@ -110,14 +159,15 @@ public:
             && (detail::ForeignSelectionFor<Members, Record, TargetDaos> && ...)
     drogon::Task<std::optional<Record>> findById(
         Id id, detail::ForeignSelection<Members, TargetDaos>... selections) const {
-        if (!(selections.dao.get().usesBackend(database_) && ...)) {
-            throw std::invalid_argument("foreign DAOs must use the same database backend");
-        }
-        auto record = co_await findById(std::move(id));
-        if (record) {
-            ((co_await selections.dao.get().loadForeign(detail::foreignField((*record).*Members))), ...);
-        }
-        co_return record;
+        return readWithForeign({}, std::move(id), selections...);
+    }
+
+    template <auto... Members, typename... TargetDaos>
+        requires (sizeof...(Members) > 0)
+            && (detail::ForeignSelectionFor<Members, Record, TargetDaos> && ...)
+    drogon::Task<std::optional<Record>> findById(
+        const DaoTransaction& tx, Id id, detail::ForeignSelection<Members, TargetDaos>... selections) const {
+        return readWithForeign(std::cref(tx), std::move(id), selections...);
     }
 
     bool usesBackend(const DatabaseBackendPtr& database) const {
@@ -125,42 +175,56 @@ public:
     }
 
     drogon::Task<Id> create(Record record) const {
-        checkId<true>(record);
-        const auto result = co_await writeRecord<true>(insert_, record);
-        co_return detail::readScalar<Id>(result[0][0]);
+        return createRecord({}, std::move(record));
+    }
+
+    drogon::Task<Id> create(const DaoTransaction& tx, Record record) const {
+        return createRecord(std::cref(tx), std::move(record));
     }
 
     drogon::Task<bool> update(Record record) const {
-        checkId<false>(record);
-        const auto result = co_await writeRecord<false>(update_, record);
-        co_return result.affectedRows() != 0;
+        return updateRecord({}, std::move(record));
+    }
+
+    drogon::Task<bool> update(const DaoTransaction& tx, Record record) const {
+        return updateRecord(std::cref(tx), std::move(record));
     }
 
     drogon::Task<bool> deleteById(Id id) const {
-        const auto result = co_await executeSql("DELETE FROM " + table_ + " WHERE " + key_ + " = " + parameter(1), std::move(id));
-        co_return result.affectedRows() != 0;
+        return deleteRecord({}, std::move(id));
+    }
+
+    drogon::Task<bool> deleteById(const DaoTransaction& tx, Id id) const {
+        return deleteRecord(std::cref(tx), std::move(id));
     }
 
     template <auto... Members>
         requires (sizeof...(Members) > 0) && (recordMember<Members> && ...)
     drogon::Task<std::int64_t> count(detail::DaoPredicate<Members>... predicates) const {
-        std::string sql = "SELECT COUNT(*) FROM " + table_;
-        std::vector<detail::QueryValue> values;
-        appendWhere(sql, values, predicates...);
-        const auto rows = co_await executeBound(std::move(sql), std::move(values));
-        co_return rows[0][0].template as<std::int64_t>();
+        return countRecords({}, std::move(predicates)...);
+    }
+
+    template <auto... Members>
+        requires (sizeof...(Members) > 0) && (recordMember<Members> && ...)
+    drogon::Task<std::int64_t> count(const DaoTransaction& tx, detail::DaoPredicate<Members>... predicates) const {
+        return countRecords(std::cref(tx), std::move(predicates)...);
     }
 
     // Use application-owned SQL and pass runtime values as bound parameters.
     template <typename... Args>
     drogon::Task<drogon::orm::Result> executeSql(std::string sql, Args&&... args) const {
-        return execute(std::move(sql), ownArgument(std::forward<Args>(args))...);
+        return execute({}, std::move(sql), ownArgument(std::forward<Args>(args))...);
+    }
+
+    template <typename... Args>
+    drogon::Task<drogon::orm::Result> executeSql(const DaoTransaction& tx, std::string sql, Args&&... args) const {
+        return execute(std::cref(tx), std::move(sql), ownArgument(std::forward<Args>(args))...);
     }
 
 protected:
     static drogon::Task<Derived> finishInitialization(Derived dao) {
         auto& base = static_cast<BaseDao&>(dao);
-        co_await base.database_->initializeTable(base.tableName_, std::move(base.schema_));
+        co_await base.database_->initializeTable(base.tableName_, std::move(base.schema_), compositeUniqueness());
         co_return std::move(dao);
     }
 
@@ -219,6 +283,83 @@ protected:
     std::string parameter(std::size_t index) const { return database_->parameter(index); }
 
 private:
+    template <auto... Members>
+    static void addCompositeUnique(CompositeUniqueness& constraints, CompositeUnique<Members...>) {
+        static_assert((std::same_as<Fields, typename detail::DaoMember<decltype(Members)>::Record> && ...),
+                      "CompositeUnique members must belong to the DAO fields type");
+        constraints.push_back({std::string(glz::get_name<Members>())...});
+    }
+
+    template <typename... Constraints>
+    static void addCompositeUnique(CompositeUniqueness& result, const std::tuple<Constraints...>& constraints) {
+        std::apply([&](const auto&... constraint) { (addCompositeUnique(result, constraint), ...); }, constraints);
+    }
+
+    static CompositeUniqueness compositeUniqueness() {
+        CompositeUniqueness result;
+        if constexpr (requires { Fields::constraints; }) {
+            addCompositeUnique(result, Fields::constraints);
+        }
+        return result;
+    }
+
+    const drogon::orm::DbClientPtr& transactionClient(const DaoTransaction& tx) const {
+        if (std::addressof(tx.backend()) != database_.get()) {
+            throw std::invalid_argument("DAO and transaction must use the same database backend");
+        }
+        return tx.client();
+    }
+
+    drogon::Task<std::optional<Record>> readById(TransactionScope tx, Id id) const {
+        const auto rows = co_await execute(tx, select_ + " WHERE " + key_ + " = " + parameter(1), ownArgument(std::move(id)));
+        if (rows.empty()) co_return std::nullopt;
+        co_return mapRow(rows[0]);
+    }
+
+    template <auto... Members, typename... TargetDaos>
+    drogon::Task<std::optional<Record>> readWithForeign(
+        TransactionScope tx, Id id, detail::ForeignSelection<Members, TargetDaos>... selections) const {
+        if (!(selections.dao.get().usesBackend(database_) && ...)) {
+            throw std::invalid_argument("foreign DAOs must use the same database backend");
+        }
+        auto record = co_await readById(tx, std::move(id));
+        if (record) {
+            if (tx) {
+                ((co_await selections.dao.get().loadForeign(tx->get(), detail::foreignField((*record).*Members))), ...);
+            } else {
+                ((co_await selections.dao.get().loadForeign(detail::foreignField((*record).*Members))), ...);
+            }
+        }
+        co_return record;
+    }
+
+    drogon::Task<Id> createRecord(TransactionScope tx, Record record) const {
+        checkId<true>(record);
+        const auto result = co_await writeRecord<true>(tx, insert_, record);
+        co_return detail::readScalar<Id>(result[0][0]);
+    }
+
+    drogon::Task<bool> updateRecord(TransactionScope tx, Record record) const {
+        checkId<false>(record);
+        const auto result = co_await writeRecord<false>(tx, update_, record);
+        co_return result.affectedRows() != 0;
+    }
+
+    drogon::Task<bool> deleteRecord(TransactionScope tx, Id id) const {
+        const auto result = co_await execute(tx, "DELETE FROM " + table_ + " WHERE " + key_ + " = " + parameter(1),
+                                            ownArgument(std::move(id)));
+        co_return result.affectedRows() != 0;
+    }
+
+    template <auto... Members>
+    drogon::Task<std::int64_t> countRecords(TransactionScope tx, detail::DaoPredicate<Members>... predicates) const {
+        std::string sql = "SELECT COUNT(*) FROM " + table_;
+        std::vector<detail::QueryValue> values;
+        appendWhere(sql, values, predicates...);
+        const auto rows = co_await executeBound(tx, std::move(sql), std::move(values));
+        co_return rows[0][0].template as<std::int64_t>();
+    }
+
     static constexpr std::array<std::string_view, 2> timestampNames_{"created_at", "updated_at"};
     static constexpr auto names_ = glz::reflect<Fields>::keys;
     static constexpr auto indices_ = std::make_index_sequence<names_.size()>{};
@@ -344,7 +485,7 @@ private:
 
     template <typename... Modifiers>
     drogon::Task<std::vector<Record>> findPage(
-        std::int64_t limit, std::int64_t offset, Modifiers... modifiers) const {
+        TransactionScope tx, std::int64_t limit, std::int64_t offset, Modifiers... modifiers) const {
         if (limit <= 0 || offset < 0) throw std::invalid_argument("invalid pagination");
         FindQuery query;
         // Collect left to right so explicit sort fields retain the caller's order.
@@ -380,7 +521,7 @@ private:
                " OFFSET " + parameter(values.size() + 2);
         values.emplace_back(limit);
         values.emplace_back(offset);
-        const auto rows = co_await executeBound(std::move(sql), std::move(values));
+        const auto rows = co_await executeBound(tx, std::move(sql), std::move(values));
 
         std::vector<Record> records;
         records.reserve(rows.size());
@@ -455,7 +596,10 @@ private:
     }
 
     drogon::Task<drogon::orm::Result> executeBound(
-        std::string sql, std::vector<detail::QueryValue> values) const {
+        TransactionScope tx, std::string sql, std::vector<detail::QueryValue> values) const {
+        if (tx) {
+            co_return co_await detail::executeBoundOn(transactionClient(tx->get()), std::move(sql), std::move(values));
+        }
         if (const auto gate = database_->queryGate()) {
             const auto lock = co_await gate->get().scoped_lock();
             co_return co_await detail::executeBoundOn(database_->client(), std::move(sql), std::move(values));
@@ -480,17 +624,17 @@ private:
     }
 
     template <bool Insert>
-    drogon::Task<drogon::orm::Result> writeRecord(const std::string& sql, Record& record) const {
+    drogon::Task<drogon::orm::Result> writeRecord(TransactionScope tx, const std::string& sql, Record& record) const {
         auto fields = glz::to_tie(static_cast<Fields&>(record));
         return [&]<std::size_t... I>(std::index_sequence<I...>) {
             if constexpr (Insert) {
-                return executeSql(sql, Traits<I>::unwrap(glz::get<I>(fields))...);
+                return execute(tx, sql, ownArgument(Traits<I>::unwrap(glz::get<I>(fields)))...);
             } else {
                 return std::apply([&](auto... flags) {
                     if constexpr (Record::generatedId) {
-                        return executeSql(sql, updateValue<I>(record, glz::get<I>(fields))..., *record.id, flags...);
+                        return execute(tx, sql, ownArgument(updateValue<I>(record, glz::get<I>(fields)))..., *record.id, flags...);
                     } else {
-                        return executeSql(sql, updateValue<I>(record, glz::get<I>(fields))..., flags...);
+                        return execute(tx, sql, ownArgument(updateValue<I>(record, glz::get<I>(fields)))..., flags...);
                     }
                 }, std::tuple_cat(updateFlag<I>(record)...));
             }
@@ -518,7 +662,10 @@ private:
     }
 
     template <typename... Args>
-    drogon::Task<drogon::orm::Result> execute(std::string sql, Args... args) const {
+    drogon::Task<drogon::orm::Result> execute(TransactionScope tx, std::string sql, Args... args) const {
+        if (tx) {
+            co_return co_await detail::executeOn(transactionClient(tx->get()), std::move(sql), std::move(args)...);
+        }
         if (const auto gate = database_->queryGate()) {
             const auto lock = co_await gate->get().scoped_lock();
             co_return co_await detail::executeOn(database_->client(), std::move(sql), std::move(args)...);

@@ -154,9 +154,9 @@ struct FieldTraits<Default<T, Initial>> : FieldTraits<T> {
 template <typename T, ColumnConstraint Constraint>
 struct FieldTraits<SchemaField<T, Constraint>> : FieldTraits<T> {
     using Inner = FieldTraits<T>;
-    static constexpr bool primary = Constraint == ColumnConstraint::primary;
-    static constexpr bool unique = Constraint == ColumnConstraint::unique;
-    static constexpr bool indexed = Constraint == ColumnConstraint::indexed;
+    static constexpr bool primary = Inner::primary || Constraint == ColumnConstraint::primary;
+    static constexpr bool unique = Inner::unique || Constraint == ColumnConstraint::unique;
+    static constexpr bool indexed = Inner::indexed || Constraint == ColumnConstraint::indexed;
     static auto& unwrap(SchemaField<T, Constraint>& field) { return Inner::unwrap(field.value); }
     static void setKey(SchemaField<T, Constraint>& field, typename Inner::Value key) {
         Inner::setKey(field.value, std::move(key));

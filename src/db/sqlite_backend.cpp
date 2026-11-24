@@ -1,6 +1,7 @@
 #include "database_backend.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <charconv>
 #include <cctype>
 #include <stdexcept>
@@ -73,8 +74,10 @@ std::string normalizeSchemaSql(std::string_view sql) {
 
 class SqliteSchema {
 public:
-    SqliteSchema(const drogon::orm::DbClientPtr& client, std::string table, std::vector<DatabaseColumn> schema)
-        : client_(client), tableName_(std::move(table)), table_(quoteIdentifier(tableName_)), schema_(std::move(schema)) {}
+    SqliteSchema(const drogon::orm::DbClientPtr& client, std::string table, std::vector<DatabaseColumn> schema,
+                 CompositeUniqueness composite)
+        : client_(client), tableName_(std::move(table)), table_(quoteIdentifier(tableName_)), schema_(std::move(schema)),
+          composite_(std::move(composite)) {}
 
     drogon::Task<> apply() const {
         std::string definitions;
@@ -83,25 +86,15 @@ public:
             definitions += columnDefinition(field);
         }
 
-        co_await executeSql("BEGIN IMMEDIATE");
-        std::exception_ptr failure;
-        try {
-            co_await executeSql("CREATE TABLE IF NOT EXISTS " + table_ + " (" + definitions + ")");
-            co_await reconcileSchema(true);
-            co_await validateGeneratedKey();
-            co_await createIndexes();
-            co_await createTimestampTriggers();
-            co_await reconcileSchema(false);
-            co_await validateForeignKeys();
-            co_await validateEnumConstraints();
-            co_await executeSql("COMMIT");
-        } catch (...) {
-            failure = std::current_exception();
-        }
-        if (failure) {
-            co_await executeSql("ROLLBACK");
-            std::rethrow_exception(failure);
-        }
+        co_await executeSql("CREATE TABLE IF NOT EXISTS " + table_ + " (" + definitions + ")");
+        co_await reconcileSchema(true);
+        co_await validateGeneratedKey();
+        co_await createIndexes();
+        co_await createCompositeIndexes();
+        co_await createTimestampTriggers();
+        co_await reconcileSchema(false);
+        co_await validateForeignKeys();
+        co_await validateEnumConstraints();
     }
 
 private:
@@ -156,7 +149,7 @@ private:
 
     drogon::Task<> createIndexes() const {
         for (const auto& column : schema_) {
-            if (!column.indexed) continue;
+            if (!column.indexed || column.primary || column.unique) continue;
             const auto index = "idx_" + std::to_string(tableName_.size()) + "_" + tableName_ + "_" + column.name;
             co_await executeSql("CREATE INDEX IF NOT EXISTS " + quoteIdentifier(index) +
                                 " ON " + table_ + " (" + quoteIdentifier(column.name) +
@@ -169,6 +162,43 @@ private:
                 fields[0][1].template as<int>() != column.indexDescending) {
                 schemaError("invalid index " + index);
             }
+        }
+    }
+
+    drogon::Task<bool> hasCompositeIndex(const std::vector<std::string>& columns) const {
+        const auto indexes = co_await executeSql(
+            "SELECT name FROM pragma_index_list(?) WHERE [unique] = 1 AND partial = 0", tableName_);
+        for (const auto& index : indexes) {
+            const auto keys = co_await executeSql(
+                "SELECT name, coll FROM pragma_index_xinfo(?) WHERE [key] = 1 ORDER BY seqno",
+                index[0].as<std::string>());
+            if (keys.size() != columns.size()) continue;
+
+            bool matches = true;
+            for (std::size_t i = 0; i < columns.size(); ++i) {
+                if (keys[i][0].isNull() || keys[i][0].as<std::string>() != columns[i] ||
+                    keys[i][1].as<std::string>() != "BINARY") {
+                    matches = false;
+                    break;
+                }
+            }
+            if (matches) co_return true;
+        }
+        co_return false;
+    }
+
+    drogon::Task<> createCompositeIndexes() const {
+        for (const auto& columns : composite_) {
+            if (co_await hasCompositeIndex(columns)) continue;
+            std::string index = "uq_" + std::to_string(tableName_.size()) + "_" + tableName_;
+            std::string keys;
+            for (const auto& column : columns) {
+                index += "_" + std::to_string(column.size()) + "_" + column;
+                if (!keys.empty()) keys += ", ";
+                keys += quoteIdentifier(column);
+            }
+            co_await executeSql("CREATE UNIQUE INDEX " + quoteIdentifier(index) +
+                                " ON " + table_ + " (" + keys + ")");
         }
     }
 
@@ -204,7 +234,7 @@ private:
         if (field.primary) definition += " PRIMARY KEY";
         if (field.generated) definition += " AUTOINCREMENT";
         if (!field.nullable) definition += " NOT NULL";
-        if (field.unique) definition += " UNIQUE";
+        if (field.unique && !field.primary) definition += " UNIQUE";
         if (const auto value = sqliteDefault(field)) definition += " DEFAULT " + *value;
         if (const auto target = field.foreignKey) {
             definition += " REFERENCES " + quoteIdentifier(target->table) + " (" +
@@ -283,7 +313,7 @@ private:
             if (!defaultField.isNull()) actualDefault = defaultField.template as<std::string>();
             if ((*actual)[1].template as<std::string>() != sqliteType(expected.type) ||
                 (*actual)[2].template as<int>() != !expected.nullable ||
-                (*actual)[3].template as<int>() != expected.primary || unique != expected.unique ||
+                (*actual)[3].template as<int>() != expected.primary || unique != (expected.unique && !expected.primary) ||
                 actualDefault != sqliteDefault(expected)) {
                 schemaError("column " + expected.name);
             }
@@ -296,13 +326,27 @@ private:
     const drogon::orm::DbClientPtr& client_;
     std::string tableName_, table_;
     std::vector<DatabaseColumn> schema_;
+    CompositeUniqueness composite_;
+};
+
+class SqliteTransaction final : public DaoTransaction {
+public:
+    explicit SqliteTransaction(const DatabaseBackend& owner) : owner_(owner) {}
+    const DatabaseBackend& backend() const override { return owner_; }
+    const drogon::orm::DbClientPtr& client() const override { return owner_.client(); }
+
+private:
+    const DatabaseBackend& owner_;
 };
 
 class SqliteBackend final : public DatabaseBackend {
 public:
     explicit SqliteBackend(drogon::orm::DbClientPtr client) : client_(std::move(client)) {}
 
-    const drogon::orm::DbClientPtr& client() const override { return client_; }
+    const drogon::orm::DbClientPtr& client() const override {
+        if (!usable_.load()) throw std::runtime_error("SQLite backend unavailable after failed rollback");
+        return client_;
+    }
     std::string parameter(std::size_t index) const override { return "?" + std::to_string(index); }
     std::string containsText(std::string_view column, std::size_t index) const override {
         return "instr(" + std::string(column) + ", " + parameter(index) + ") > 0";
@@ -312,14 +356,58 @@ public:
     }
     std::optional<std::reference_wrapper<drogon::Mutex>> queryGate() const override { return std::ref(gate_); }
 
-    // The single SQLite connection must be reserved for the entire schema transaction.
-    drogon::Task<> initializeTable(std::string table, std::vector<DatabaseColumn> columns) override {
+    drogon::Task<> transaction(TransactionCallback work) override {
         const auto lock = co_await gate_.scoped_lock();
-        const SqliteSchema schema(client_, std::move(table), std::move(columns));
-        co_await schema.apply();
+        const auto& connection = client();
+        co_await detail::executeOn(connection, "BEGIN IMMEDIATE");
+
+        SqliteTransaction tx(*this);
+        std::exception_ptr failure;
+        try {
+            co_await work(tx);
+            co_await detail::executeOn(connection, "COMMIT");
+        } catch (...) {
+            failure = std::current_exception();
+        }
+        if (failure) {
+            std::exception_ptr rollbackFailure;
+            try {
+                co_await detail::executeOn(connection, "ROLLBACK");
+            } catch (...) {
+                usable_.store(false);
+                rollbackFailure = std::current_exception();
+            }
+            if (rollbackFailure) reportRollbackFailure(failure, rollbackFailure);
+            std::rethrow_exception(failure);
+        }
+    }
+
+    drogon::Task<> initializeTable(
+        std::string table, std::vector<DatabaseColumn> columns, CompositeUniqueness composite) override {
+        co_await transaction([&](DaoTransaction& tx) -> drogon::Task<> {
+            const SqliteSchema schema(tx.client(), std::move(table), std::move(columns), std::move(composite));
+            co_await schema.apply();
+        });
     }
 
 private:
+    [[noreturn]] static void reportRollbackFailure(std::exception_ptr original, std::exception_ptr rollback) {
+        std::string message = "SQLite rollback failed";
+        try {
+            std::rethrow_exception(rollback);
+        } catch (const std::exception& error) {
+            message += ": ";
+            message += error.what();
+        } catch (...) {
+        }
+        try {
+            std::rethrow_exception(original);
+        } catch (...) {
+            std::throw_with_nested(std::runtime_error(message));
+        }
+    }
+
+    std::atomic<bool> usable_{true};
     drogon::orm::DbClientPtr client_;
     mutable drogon::Mutex gate_;
 };
