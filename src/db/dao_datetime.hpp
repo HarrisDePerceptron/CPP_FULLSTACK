@@ -1,12 +1,19 @@
-#include "dao_record.hpp"
+#pragma once
 
-#include <charconv>
-#include <format>
+#include "app_namespace.hpp"
+
+#include <chrono>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 
-namespace APP_NAMESPACE::detail {
+namespace APP_NAMESPACE {
 
-DaoDateTime parseDaoDateTime(std::string_view text) {
+using DaoDateTime = std::chrono::sys_time<std::chrono::milliseconds>;
+
+namespace detail {
+
+constexpr DaoDateTime parseDaoDateTime(std::string_view text) {
     using namespace std::chrono;
     constexpr auto invalid = "invalid DAO UTC datetime";
     if (text.size() != 24 || text[4] != '-' || text[7] != '-' || text[10] != 'T' ||
@@ -16,9 +23,11 @@ DaoDateTime parseDaoDateTime(std::string_view text) {
 
     const auto number = [&](std::size_t offset, std::size_t size) {
         unsigned value{};
-        const auto* end = text.data() + offset + size;
-        const auto result = std::from_chars(text.data() + offset, end, value);
-        if (result.ec != std::errc{} || result.ptr != end) throw std::runtime_error(invalid);
+        for (std::size_t i = 0; i < size; ++i) {
+            const auto digit = text[offset + i];
+            if (digit < '0' || digit > '9') throw std::runtime_error(invalid);
+            value = value * 10 + static_cast<unsigned>(digit - '0');
+        }
         return value;
     };
     const auto date = year{static_cast<int>(number(0, 4))} / month{number(5, 2)} / day{number(8, 2)};
@@ -29,8 +38,8 @@ DaoDateTime parseDaoDateTime(std::string_view text) {
     return sys_days{date} + hours{hour} + minutes{minute} + seconds{second} + milliseconds{number(20, 3)};
 }
 
-std::string formatDaoDateTime(DaoDateTime value) {
-    return std::format("{:%FT%T}Z", value);
+std::string formatDaoDateTime(DaoDateTime value);
+
 }
 
 }

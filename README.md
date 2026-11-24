@@ -47,16 +47,26 @@ xmake test
 
 ## Database example
 
-Define the fields, wrap them in `DaoRecord` for a generated ID and timestamps, and give each table a DAO. This example uses a required foreign key from a task to its project.
+The database layer opens one shared SQLite backend through Drogon. Each DAO maps a C++ record to a table and provides coroutine-based queries. In the server, startup initializes the DAOs, services own them and handle business logic, and routes call the services.
+
+### Define records and DAOs
+
+Use a fields struct with a `table_name`, wrap it in `DaoRecord`, and derive a DAO from `BaseDao`. Field names become column names. `DaoRecord` supplies a generated integer ID unless a field declares `Primary<T>`. Timestamps are enabled by default. Each DAO can opt out by passing `DaoOptions{.timestamps = false}` as the third template argument to `BaseDao`.
 
 ```cpp
 #include "db/base_dao.hpp"
+
+#include <print>
+#include <string>
+#include <string_view>
+#include <utility>
 
 namespace APP_NAMESPACE {
 
 struct ProjectFields {
     static constexpr std::string_view table_name = "projects";
-    std::string name;
+
+    Unique<std::string> name;
 };
 using ProjectRecord = DaoRecord<ProjectFields>;
 
@@ -70,10 +80,17 @@ private:
     explicit ProjectDao(DatabaseBackendPtr database) : BaseDao(std::move(database)) {}
 };
 
+enum class TaskStatus { draft, done };
+
 struct TaskFields {
     static constexpr std::string_view table_name = "tasks";
+
     std::string title;
-    RequiredForeign<ProjectRecord> project_id;
+    Indexed<RequiredForeign<ProjectRecord>> project_id;
+    Foreign<ProjectRecord> related_project_id;
+    Default<TaskStatus, TaskStatus::draft> status;
+    std::optional<std::string> note;
+    std::optional<DaoDateTime> due_at;
 };
 using TaskRecord = DaoRecord<TaskFields>;
 
@@ -90,7 +107,11 @@ private:
 }
 ```
 
-In a coroutine, open one backend and pass it to both DAOs. Initialize the parent table first. Use `":memory:"` for a disposable example or a file path such as `".local/example.sqlite3"` for persistent storage.
+`Foreign<T>` is nullable by default. Use `RequiredForeign<T>` for a required reference. Referenced rows are protected from deletion while a child points to them. Plain enums need no registration. Use distinct values in the range `-128` to `127`, and treat enumerator names as stored labels. `DaoDateTime` represents a UTC time point with millisecond precision.
+
+### Connect and run queries
+
+Place this coroutine after the definitions above. It uses an in-memory database so you can run it repeatedly. For persistence, pass a path such as `".local/example.sqlite3"` after creating the parent directory. Initialize referenced tables first.
 
 ```cpp
 namespace APP_NAMESPACE {
@@ -100,16 +121,45 @@ drogon::Task<> databaseExample() {
     auto projects = co_await ProjectDao::init(database);
     auto tasks = co_await TaskDao::init(database);
 
-    auto project_id = co_await projects.create({{"Website"}});
-    auto task_id = co_await tasks.create({{"Write docs", project_id}});
+    // Insert rows and get their IDs.
+    const auto website_id = co_await projects.create({{"Website"}});
+    const auto docs_id = co_await projects.create({{"Documentation"}});
+    TaskRecord draft{{"Write docs", website_id, docs_id}};
+    draft.note = "Start with the database example.";
+    const auto task_id = co_await tasks.create(draft);
 
-    auto project_tasks = co_await tasks.find(where<&TaskRecord::project_id>(project_id));
-    auto task = co_await tasks.findById(task_id, withForeign<&TaskRecord::project_id>(projects));
-    if (task) {
-        // task->project_id.record() contains the loaded project.
-        task->title = "Review docs";
-        co_await tasks.update(*task);
+    // Filter, select optional fields, sort, and fetch the first page.
+    auto page = co_await tasks.find(
+        20, 0,
+        select<&TaskRecord::note, &TaskRecord::related_project_id>(),
+        orderBy<&TaskRecord::title>(),
+        where<&TaskRecord::project_id>(website_id));
+
+    if (!page.empty()) {
+        auto& task = page.front();
+        if (task.isLoaded<&TaskRecord::note>() && task.note) {
+            std::println("Note: {}", *task.note);
+        }
+        task.status.value = TaskStatus::done;
+        co_await tasks.update(task);
     }
+
+    // Count matches across all pages.
+    const auto total = co_await tasks.count(
+        where<&TaskRecord::project_id>(in({website_id, docs_id})),
+        where<&TaskRecord::title>(contains("docs")));
+    std::println("Matching tasks: {}", total);
+
+    // Read by ID and explicitly fetch the related project.
+    const auto task = co_await tasks.findById(
+        task_id, withForeign<&TaskRecord::related_project_id>(projects));
+    if (task && task->related_project_id.record()) {
+        std::println("Related project: {}", task->related_project_id.record()->name.value);
+    }
+
+    // Run custom SQL with a bound parameter.
+    const auto rows = co_await tasks.executeSql("SELECT title FROM tasks WHERE id = ?", task_id);
+    if (!rows.empty()) std::println("Title: {}", rows[0]["title"].as<std::string>());
 
     co_await tasks.deleteById(task_id);
 }
@@ -117,7 +167,20 @@ drogon::Task<> databaseExample() {
 }
 ```
 
-Use `Foreign<ProjectRecord>` for a nullable reference. A plain `findById(task_id)` reads the task and its foreign key. Passing `withForeign` also loads the selected project.
+### Operation reference
+
+| Operation | Behavior |
+| --- | --- |
+| `init(database)` | Creates or validates the table and applies supported additive schema upgrades. |
+| `create(record)` | Inserts a row and returns its primary key. Leave generated IDs empty on insert. |
+| `find(...)` | Defaults to 100 rows at offset 0. Returns the key and required fields, sorted by newest update when timestamps are enabled and by primary key otherwise. Use `select<...>()` or `selectAll()` for nullable fields, and `orderBy<Member>(SortDirection::desc)` for descending order. |
+| `findById(id)` | Returns an optional full record. Foreign fields contain keys. Pass `withForeign<Member>(target_dao)` to load selected related records, or call `target_dao.loadForeign(field)` later. |
+| `update(record)` | Updates by primary key and preserves fields that `find()` omitted. A loaded nullable field set to `std::nullopt` clears the value. |
+| `deleteById(id)` | Deletes by primary key and reports whether a row was deleted. |
+| `count(where<...>(...))` | Counts all matching rows and requires at least one predicate. |
+| `executeSql(sql, args...)` | Runs custom, backend-specific SQL with bound arguments. |
+
+`where<Member>(value)` means equality. Use `eq`, `gt`, `gte`, `lt`, `lte`, `in`, or `contains` to name an operator. Separate filters combine with `AND`. `contains` matches literal, case-sensitive text. `negate(where<...>(...))` includes rows with `NULL` when the original filter excludes them.
 
 ## Configuration
 

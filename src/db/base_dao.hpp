@@ -2,6 +2,7 @@
 
 #include "database_backend.hpp"
 #include "dao_record.hpp"
+#include "dao_predicate.hpp"
 #include "row_to_struct.hpp"
 
 #include <drogon/orm/DbClient.h>
@@ -17,32 +18,32 @@
 
 namespace APP_NAMESPACE {
 
+enum class SortDirection { asc, desc };
+
 namespace detail {
 
-template <typename MemberPointer>
-struct DaoMember;
+template <auto... Members>
+struct SelectFields {};
 
-template <typename Owner, typename Value>
-struct DaoMember<Value Owner::*> {
-    using Record = Owner;
-    using Type = typename FieldTraits<std::remove_cv_t<Value>>::Value;
-};
+struct SelectAll {};
 
 template <auto Member>
-struct DaoPredicate {
-    using Record = typename DaoMember<decltype(Member)>::Record;
-    static constexpr auto name = glz::get_name<Member>();
-    typename DaoMember<decltype(Member)>::Type value;
+struct OrderBy {
+    SortDirection direction;
 };
 
 }
 
-template <auto Member, typename Value>
+template <auto... Members>
+    requires (sizeof...(Members) > 0) && (std::is_member_object_pointer_v<decltype(Members)> && ...)
+auto select() { return detail::SelectFields<Members...>{}; }
+
+inline auto selectAll() { return detail::SelectAll{}; }
+
+template <auto Member>
     requires std::is_member_object_pointer_v<decltype(Member)>
-        && std::constructible_from<typename detail::DaoMember<decltype(Member)>::Type, Value>
-auto where(Value&& value) {
-    using Type = typename detail::DaoMember<decltype(Member)>::Type;
-    return detail::DaoPredicate<Member>{Type(std::forward<Value>(value))};
+auto orderBy(SortDirection direction = SortDirection::asc) {
+    return detail::OrderBy<Member>{direction};
 }
 
 struct DaoOptions { bool timestamps = true; };
@@ -59,6 +60,20 @@ class BaseDao {
         (Record::generatedId &&
          std::same_as<detail::DaoGeneratedKey<Fields, true>, typename detail::DaoPredicate<Member>::Record>);
 
+    static constexpr bool validModifier(...) { return false; }
+    static constexpr bool validModifier(std::type_identity<detail::SelectAll>) { return true; }
+
+    template <auto... Members>
+    static constexpr bool validModifier(std::type_identity<detail::SelectFields<Members...>>) {
+        return (recordMember<Members> && ...);
+    }
+
+    template <auto Member>
+    static constexpr bool validModifier(std::type_identity<detail::OrderBy<Member>>) { return recordMember<Member>; }
+
+    template <auto Member>
+    static constexpr bool validModifier(std::type_identity<detail::DaoPredicate<Member>>) { return recordMember<Member>; }
+
 public:
     using RecordType = Record;
 
@@ -66,19 +81,17 @@ public:
         return findPage(limit, offset);
     }
 
-    template <auto... Members>
-        requires (sizeof...(Members) > 0)
-            && (recordMember<Members> && ...)
-    drogon::Task<std::vector<Record>> find(detail::DaoPredicate<Members>... predicates) const {
-        return findPage(100, 0, std::move(predicates)...);
+    template <typename... Modifiers>
+        requires (sizeof...(Modifiers) > 0) && (validModifier(std::type_identity<Modifiers>{}) && ...)
+    drogon::Task<std::vector<Record>> find(Modifiers... modifiers) const {
+        return findPage(100, 0, std::move(modifiers)...);
     }
 
-    template <auto... Members>
-        requires (sizeof...(Members) > 0)
-            && (recordMember<Members> && ...)
+    template <typename... Modifiers>
+        requires (sizeof...(Modifiers) > 0) && (validModifier(std::type_identity<Modifiers>{}) && ...)
     drogon::Task<std::vector<Record>> find(
-        std::int64_t limit, std::int64_t offset, detail::DaoPredicate<Members>... predicates) const {
-        return findPage(limit, offset, std::move(predicates)...);
+        std::int64_t limit, std::int64_t offset, Modifiers... modifiers) const {
+        return findPage(limit, offset, std::move(modifiers)...);
     }
 
     template <bool Nullable>
@@ -114,7 +127,7 @@ public:
     drogon::Task<Id> create(Record record) const {
         checkId<true>(record);
         const auto result = co_await writeRecord<true>(insert_, record);
-        co_return result[0][0].template as<Id>();
+        co_return detail::readScalar<Id>(result[0][0]);
     }
 
     drogon::Task<bool> update(Record record) const {
@@ -128,8 +141,13 @@ public:
         co_return result.affectedRows() != 0;
     }
 
-    drogon::Task<std::int64_t> count() const {
-        const auto rows = co_await executeSql("SELECT COUNT(*) FROM " + table_);
+    template <auto... Members>
+        requires (sizeof...(Members) > 0) && (recordMember<Members> && ...)
+    drogon::Task<std::int64_t> count(detail::DaoPredicate<Members>... predicates) const {
+        std::string sql = "SELECT COUNT(*) FROM " + table_;
+        std::vector<detail::QueryValue> values;
+        appendWhere(sql, values, predicates...);
+        const auto rows = co_await executeBound(std::move(sql), std::move(values));
         co_return rows[0][0].template as<std::int64_t>();
     }
 
@@ -142,7 +160,7 @@ public:
 protected:
     static drogon::Task<Derived> finishInitialization(Derived dao) {
         auto& base = static_cast<BaseDao&>(dao);
-        co_await base.database_->initializeTable(base.tableName_, std::move(base.schema_), base.migration_);
+        co_await base.database_->initializeTable(base.tableName_, std::move(base.schema_));
         co_return std::move(dao);
     }
 
@@ -151,18 +169,19 @@ protected:
     BaseDao(BaseDao&&) noexcept = default;
     BaseDao& operator=(BaseDao&&) noexcept = default;
 
-    BaseDao(DatabaseBackendPtr database,
-            LegacyMigration migration = LegacyMigration::none)
-        : database_(std::move(database)), tableName_(Fields::table_name), table_(detail::quoteIdentifier(tableName_)),
-          migration_(migration) {
+    explicit BaseDao(DatabaseBackendPtr database)
+        : database_(std::move(database)), tableName_(Fields::table_name), table_(detail::quoteIdentifier(tableName_)) {
         if (!database_) throw std::invalid_argument("DAO requires a database backend");
         buildSchema(indices_);
         std::string projection, columns, placeholders, assignments, keyParameter;
         std::size_t insertIndex = 0, updateIndex = 0;
+        std::size_t flagIndex = names_.size() + Record::generatedId;
         for (const auto& field : schema_) {
             const auto column = detail::quoteIdentifier(field.name);
             if (!projection.empty()) projection += ", ";
             projection += column;
+            if (field.nullable) optionalColumns_.push_back(field.name);
+            else appendColumn(requiredProjection_, column);
             if (field.timestamp) continue;
 
             const auto marker = parameter(++updateIndex);
@@ -171,7 +190,13 @@ protected:
                 keyParameter = marker;
             } else {
                 if (!assignments.empty()) assignments += ", ";
-                assignments += column + " = " + marker;
+                assignments += column + " = ";
+                if (field.nullable) {
+                    assignments += "CASE WHEN " + parameter(++flagIndex) + " THEN " + marker +
+                                   " ELSE " + column + " END";
+                } else {
+                    assignments += marker;
+                }
             }
             if (!field.generated) {
                 if (!columns.empty()) {
@@ -198,19 +223,22 @@ private:
     static constexpr auto names_ = glz::reflect<Fields>::keys;
     static constexpr auto indices_ = std::make_index_sequence<names_.size()>{};
 
-    Record mapRow(const drogon::orm::Row& row) const {
-        Record result(rowToStruct<Fields>(row));
+    Record mapRow(const drogon::orm::Row& row, std::vector<std::string> omitted = {}) const {
+        if constexpr (!Options.timestamps) {
+            for (const auto name : timestampNames_) omitted.emplace_back(name);
+        }
+        auto fields = rowToStruct<Fields>(row, omitted);
+        Record result(std::move(fields), std::move(omitted));
         if constexpr (Record::generatedId) result.id = row.at("id").template as<Id>();
         if constexpr (Options.timestamps) {
-            result.created_at = readTimestamp(row.at("created_at"));
-            result.updated_at = readTimestamp(row.at("updated_at"));
+            if (result.isColumnLoaded("created_at")) {
+                detail::readRowField(result.created_at, row.at("created_at"), "created_at");
+            }
+            if (result.isColumnLoaded("updated_at")) {
+                detail::readRowField(result.updated_at, row.at("updated_at"), "updated_at");
+            }
         }
         return result;
-    }
-
-    static std::optional<DaoDateTime> readTimestamp(const drogon::orm::Field& field) {
-        if (field.isNull()) return std::nullopt;
-        return detail::parseDaoDateTime(field.as<std::string>());
     }
 
     static constexpr bool timestampName(std::string_view name) {
@@ -233,6 +261,13 @@ private:
                            Value<I>::nullable, Traits<I>::primary, Traits<I>::unique, Traits<I>::indexed,
                            Traits<I>::defaultMetadata()};
         field.foreignKey = Traits<I>::foreignKey();
+        using Scalar = typename Value<I>::Type;
+        if constexpr (std::is_scoped_enum_v<Scalar>) {
+            constexpr auto labels = magic_enum::enum_names<Scalar>();
+            static_assert(!labels.empty(), "DAO enum has no reflectable values");
+            field.enumLabels.assign(labels.begin(), labels.end());
+            std::ranges::sort(field.enumLabels);
+        }
         if (field.foreignKey && field.defaultValue) {
             throw std::invalid_argument("foreign fields cannot declare a default");
         }
@@ -247,7 +282,9 @@ private:
         }
         if constexpr (Options.timestamps) {
             for (const auto name : timestampNames_) {
-                schema_.push_back({std::string(name), ColumnType::datetime, true, false, false, false, {}, false, true});
+                DatabaseColumn field{std::string(name), ColumnType::datetime, true, false, false, true, {}, false, true};
+                field.indexDescending = true;
+                schema_.push_back(std::move(field));
             }
         }
     }
@@ -262,47 +299,213 @@ private:
         }
     }
 
-    template <auto... Members>
-    drogon::Task<std::vector<Record>> findPage(
-        std::int64_t limit, std::int64_t offset, detail::DaoPredicate<Members>... predicates) const {
-        if (limit <= 0 || offset < 0) throw std::invalid_argument("invalid pagination");
-        auto sql = select_;
-        if constexpr (sizeof...(Members) > 0) {
-            auto separator = " WHERE ";
-            std::size_t index = 0;
-            auto append = [&](std::string_view name) {
-                if (!Options.timestamps && timestampName(name)) {
-                    throw std::invalid_argument("timestamp filters require timestamps to be enabled");
-                }
-                sql += separator + database_->nullSafeEqual(detail::quoteIdentifier(name), ++index);
-                separator = " AND ";
-            };
-            (append(detail::DaoPredicate<Members>::name), ...);
+    struct FindQuery {
+        std::vector<std::string_view> selected;
+        std::vector<std::pair<std::string_view, SortDirection>> ordering;
+        bool all = false;
+    };
+
+    static void appendColumn(std::string& list, std::string_view column) {
+        if (!list.empty()) list += ", ";
+        list += column;
+    }
+
+    static void requireEnabledColumn(std::string_view name) {
+        if (!Options.timestamps && timestampName(name)) {
+            throw std::invalid_argument("timestamp queries require timestamps to be enabled");
         }
-        sql += " ORDER BY " + key_ + " LIMIT " + parameter(sizeof...(Members) + 1) +
-               " OFFSET " + parameter(sizeof...(Members) + 2);
-        const auto rows = co_await executeSql(std::move(sql), std::move(predicates.value)..., limit, offset);
+    }
+
+    static auto collect(FindQuery& query, detail::SelectAll) {
+        query.all = true;
+        return std::tuple{};
+    }
+
+    template <auto... Members>
+    static auto collect(FindQuery& query, detail::SelectFields<Members...>) {
+        ((requireEnabledColumn(glz::get_name<Members>()),
+          query.selected.push_back(glz::get_name<Members>())), ...);
+        return std::tuple{};
+    }
+
+    template <auto Member>
+    static auto collect(FindQuery& query, detail::OrderBy<Member> order) {
+        constexpr auto name = glz::get_name<Member>();
+        requireEnabledColumn(name);
+        query.ordering.emplace_back(name, order.direction);
+        return std::tuple{};
+    }
+
+    template <auto Member>
+    static auto collect(FindQuery&, detail::DaoPredicate<Member>& predicate) {
+        requireEnabledColumn(predicate.name);
+        return std::tie(predicate);
+    }
+
+    template <typename... Modifiers>
+    drogon::Task<std::vector<Record>> findPage(
+        std::int64_t limit, std::int64_t offset, Modifiers... modifiers) const {
+        if (limit <= 0 || offset < 0) throw std::invalid_argument("invalid pagination");
+        FindQuery query;
+        // Collect left to right so explicit sort fields retain the caller's order.
+        auto parts = std::tuple<decltype(collect(query, modifiers))...>{collect(query, modifiers)...};
+        const auto predicates = std::apply([](auto&&... part) {
+            return std::tuple_cat(std::move(part)...);
+        }, parts);
+
+        std::string sql = select_;
+        std::vector<std::string> omitted;
+        if (!query.all) {
+            auto projection = requiredProjection_;
+            for (const auto& name : optionalColumns_) {
+                if (std::ranges::find(query.selected, name) == query.selected.end()) omitted.push_back(name);
+                else appendColumn(projection, detail::quoteIdentifier(name));
+            }
+            sql = "SELECT " + projection + " FROM " + table_;
+        }
+        if (query.ordering.empty() && Options.timestamps) {
+            query.ordering.emplace_back("updated_at", SortDirection::desc);
+        }
+        if (std::ranges::none_of(query.ordering, [](const auto& item) { return item.first == Record::keyColumn; })) {
+            query.ordering.emplace_back(Record::keyColumn, SortDirection::asc);
+        }
+        std::string ordering;
+        for (const auto& [name, direction] : query.ordering) {
+            appendColumn(ordering, detail::quoteIdentifier(name) +
+                (direction == SortDirection::desc ? " DESC NULLS LAST" : " ASC NULLS LAST"));
+        }
+        std::vector<detail::QueryValue> values;
+        std::apply([&](const auto&... predicates) { appendWhere(sql, values, predicates...); }, predicates);
+        sql += " ORDER BY " + ordering + " LIMIT " + parameter(values.size() + 1) +
+               " OFFSET " + parameter(values.size() + 2);
+        values.emplace_back(limit);
+        values.emplace_back(offset);
+        const auto rows = co_await executeBound(std::move(sql), std::move(values));
+
         std::vector<Record> records;
         records.reserve(rows.size());
-        for (const auto& row : rows) records.push_back(mapRow(row));
+        for (const auto& row : rows) records.push_back(mapRow(row, omitted));
         co_return records;
+    }
+
+    template <typename T>
+    static detail::QueryValue queryValue(const T& value) {
+        auto owned = ownArgument(value);
+        using Owned = decltype(owned);
+        if constexpr (detail::Nullable<Owned>::nullable) {
+            if (!owned) return nullptr;
+            return queryValue(*owned);
+        } else if constexpr (std::signed_integral<Owned>) {
+            return static_cast<std::int64_t>(owned);
+        } else {
+            return owned;
+        }
+    }
+
+    template <auto Member>
+    std::string predicateSql(const detail::DaoPredicate<Member>& predicate,
+                             std::vector<detail::QueryValue>& values) const {
+        using detail::PredicateOp;
+        requireEnabledColumn(predicate.name);
+        const auto column = detail::quoteIdentifier(predicate.name);
+        std::string expression;
+        if (predicate.operation == PredicateOp::in) {
+            std::string list;
+            bool includesNull = false;
+            for (const typename detail::DaoPredicate<Member>::Value value : predicate.values) {
+                auto argument = queryValue(value);
+                if (std::holds_alternative<std::nullptr_t>(argument)) {
+                    includesNull = true;
+                } else {
+                    values.push_back(std::move(argument));
+                    appendColumn(list, parameter(values.size()));
+                }
+            }
+            expression = list.empty() ? "FALSE" : column + " IN (" + list + ")";
+            if (includesNull) expression += " OR " + column + " IS NULL";
+        } else {
+            values.push_back(queryValue(static_cast<typename detail::DaoPredicate<Member>::Value>(
+                predicate.values.front())));
+            const auto index = values.size();
+            switch (predicate.operation) {
+                case PredicateOp::eq: expression = database_->nullSafeEqual(column, index); break;
+                case PredicateOp::gt: expression = column + " > " + parameter(index); break;
+                case PredicateOp::gte: expression = column + " >= " + parameter(index); break;
+                case PredicateOp::lt: expression = column + " < " + parameter(index); break;
+                case PredicateOp::lte: expression = column + " <= " + parameter(index); break;
+                case PredicateOp::contains: expression = database_->containsText(column, index); break;
+                case PredicateOp::in: break;
+            }
+        }
+        if (predicate.negated) return "NOT COALESCE((" + expression + "), FALSE)";
+        return "(" + expression + ")";
+    }
+
+    template <typename... Predicates>
+    void appendWhere(std::string& sql, std::vector<detail::QueryValue>& values,
+                     const Predicates&... predicates) const {
+        if constexpr (sizeof...(Predicates) > 0) {
+            auto separator = " WHERE ";
+            auto append = [&](const auto& predicate) {
+                sql += separator + predicateSql(predicate, values);
+                separator = " AND ";
+            };
+            (append(predicates), ...);
+        }
+    }
+
+    drogon::Task<drogon::orm::Result> executeBound(
+        std::string sql, std::vector<detail::QueryValue> values) const {
+        if (const auto gate = database_->queryGate()) {
+            const auto lock = co_await gate->get().scoped_lock();
+            co_return co_await detail::executeBoundOn(database_->client(), std::move(sql), std::move(values));
+        }
+        co_return co_await detail::executeBoundOn(database_->client(), std::move(sql), std::move(values));
+    }
+
+    template <std::size_t I, typename Field>
+    static decltype(auto) updateValue(const Record& record, Field& field) {
+        if constexpr (Value<I>::nullable) {
+            using Argument = typename Traits<I>::Value;
+            return record.isColumnLoaded(names_[I]) ? Argument(Traits<I>::unwrap(field)) : Argument{};
+        } else {
+            return Traits<I>::unwrap(field);
+        }
+    }
+
+    template <std::size_t I>
+    static auto updateFlag(const Record& record) {
+        if constexpr (Value<I>::nullable) return std::tuple{record.isColumnLoaded(names_[I])};
+        else return std::tuple{};
     }
 
     template <bool Insert>
     drogon::Task<drogon::orm::Result> writeRecord(const std::string& sql, Record& record) const {
         auto fields = glz::to_tie(static_cast<Fields&>(record));
         return [&]<std::size_t... I>(std::index_sequence<I...>) {
-            if constexpr (!Insert && Record::generatedId) {
-                return executeSql(sql, Traits<I>::unwrap(glz::get<I>(fields))..., *record.id);
-            } else {
+            if constexpr (Insert) {
                 return executeSql(sql, Traits<I>::unwrap(glz::get<I>(fields))...);
+            } else {
+                return std::apply([&](auto... flags) {
+                    if constexpr (Record::generatedId) {
+                        return executeSql(sql, updateValue<I>(record, glz::get<I>(fields))..., *record.id, flags...);
+                    } else {
+                        return executeSql(sql, updateValue<I>(record, glz::get<I>(fields))..., flags...);
+                    }
+                }, std::tuple_cat(updateFlag<I>(record)...));
             }
         }(indices_);
     }
 
     template <typename T>
     static auto ownArgument(T&& value) {
-        if constexpr (std::same_as<std::remove_cvref_t<T>, DaoDateTime>) {
+        using Argument = std::remove_cvref_t<T>;
+        using Scalar = typename detail::Nullable<Argument>::Type;
+        if constexpr (std::is_scoped_enum_v<Argument>) {
+            return std::string(detail::enumLabel(value));
+        } else if constexpr (std::is_scoped_enum_v<Scalar>) {
+            return value ? std::optional{std::string(detail::enumLabel(*value))} : std::nullopt;
+        } else if constexpr (std::same_as<Argument, DaoDateTime>) {
             return detail::formatDaoDateTime(value);
         } else if constexpr (std::same_as<std::remove_cvref_t<T>, std::optional<DaoDateTime>>) {
             return value ? std::optional{detail::formatDaoDateTime(*value)} : std::nullopt;
@@ -326,7 +529,8 @@ private:
     DatabaseBackendPtr database_;
     std::string tableName_, table_, key_, select_, insert_, update_;
     std::vector<DatabaseColumn> schema_;
-    LegacyMigration migration_;
+    std::vector<std::string> optionalColumns_;
+    std::string requiredProjection_;
 };
 
 }

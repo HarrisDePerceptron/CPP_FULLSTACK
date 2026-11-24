@@ -4,13 +4,11 @@
 
 #include <glaze/core/reflect.hpp>
 
-#include <chrono>
+#include <algorithm>
 #include <cstdint>
 #include <tuple>
 
 namespace APP_NAMESPACE {
-
-using DaoDateTime = std::chrono::sys_time<std::chrono::milliseconds>;
 
 namespace detail {
 
@@ -51,9 +49,6 @@ struct DaoGeneratedKey<Fields, true> {
     std::optional<std::int64_t> id;
 };
 
-DaoDateTime parseDaoDateTime(std::string_view text);
-std::string formatDaoDateTime(DaoDateTime value);
-
 }
 
 template <glz::reflectable Fields>
@@ -76,6 +71,22 @@ struct DaoRecord : Fields, detail::DaoTimestamps<Fields>,
 
     DaoRecord() = default;
     DaoRecord(Fields fields) : Fields(std::move(fields)) {}
+    DaoRecord(Fields fields, std::vector<std::string> omitted)
+        : Fields(std::move(fields)), omitted_(std::move(omitted)) {}
+
+    bool isColumnLoaded(std::string_view name) const {
+        return std::ranges::find(omitted_, name) == omitted_.end();
+    }
+
+    template <auto Member>
+        requires std::is_member_object_pointer_v<decltype(Member)> &&
+                 requires(DaoRecord& record) { record.*Member; }
+    bool isLoaded() const {
+        return isColumnLoaded(glz::get_name<Member>());
+    }
+
+private:
+    std::vector<std::string> omitted_;
 };
 
 }

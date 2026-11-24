@@ -33,6 +33,8 @@ std::string sqlLiteral(const T& value) {
             literal += character;
         }
         return literal + '\'';
+    } else if constexpr (std::same_as<T, DaoDateTime>) {
+        return sqlLiteral(detail::formatDaoDateTime(value));
     } else if constexpr (std::same_as<T, double>) {
         char buffer[64];
         const auto result = std::to_chars(buffer, buffer + sizeof(buffer), value);
@@ -71,10 +73,8 @@ std::string normalizeSchemaSql(std::string_view sql) {
 
 class SqliteSchema {
 public:
-    SqliteSchema(const drogon::orm::DbClientPtr& client, std::string table, std::vector<DatabaseColumn> schema,
-                 LegacyMigration migration = LegacyMigration::none)
-        : client_(client), tableName_(std::move(table)), table_(quoteIdentifier(tableName_)), schema_(std::move(schema)),
-          migration_(migration) {}
+    SqliteSchema(const drogon::orm::DbClientPtr& client, std::string table, std::vector<DatabaseColumn> schema)
+        : client_(client), tableName_(std::move(table)), table_(quoteIdentifier(tableName_)), schema_(std::move(schema)) {}
 
     drogon::Task<> apply() const {
         std::string definitions;
@@ -86,22 +86,14 @@ public:
         co_await executeSql("BEGIN IMMEDIATE");
         std::exception_ptr failure;
         try {
-            if (migration_ == LegacyMigration::usersUsernameKey) co_await migrateLegacyUsers(definitions);
             co_await executeSql("CREATE TABLE IF NOT EXISTS " + table_ + " (" + definitions + ")");
-            if (migration_ == LegacyMigration::usersUsernameKey) {
-                co_await renameColumn("passwordHash", "password_hash");
-                co_await renameColumn("seedKey", "seed_key");
-            }
-            if (std::any_of(schema_.begin(), schema_.end(), [](const auto& field) { return field.timestamp; })) {
-                co_await renameColumn("createdAt", "created_at");
-                co_await renameColumn("updatedAt", "updated_at");
-            }
             co_await reconcileSchema(true);
             co_await validateGeneratedKey();
             co_await createIndexes();
             co_await createTimestampTriggers();
             co_await reconcileSchema(false);
             co_await validateForeignKeys();
+            co_await validateEnumConstraints();
             co_await executeSql("COMMIT");
         } catch (...) {
             failure = std::current_exception();
@@ -116,50 +108,6 @@ private:
     template <typename... Args>
     drogon::Task<drogon::orm::Result> executeSql(std::string sql, Args... args) const {
         return detail::executeOn(client_, std::move(sql), std::move(args)...);
-    }
-
-    drogon::Task<> migrateLegacyUsers(const std::string& definitions) const {
-        const auto oldKey = co_await executeSql(
-            "SELECT 1 FROM pragma_table_info(?) WHERE name = 'username' AND pk = 1", tableName_);
-        if (oldKey.empty()) co_return;
-
-        const SqliteSchema legacy(client_, tableName_, {
-            {"username", ColumnType::text, false, true, false, false, {}},
-            {"password_hash", ColumnType::text, false, false, false, false, {}},
-            {"seed_key", ColumnType::text, true, false, true, false, {}},
-        });
-        co_await legacy.reconcileSchema(false);
-        const auto definition = co_await tableDefinition();
-        if (normalizeSchemaSql(definition) != normalizeSchemaSql(
-            "CREATE TABLE users (username TEXT PRIMARY KEY NOT NULL, "
-            "password_hash TEXT NOT NULL, seed_key TEXT UNIQUE)")) {
-            schemaError("unexpected legacy users table definition");
-        }
-
-        const auto dependencies = co_await executeSql(
-            "SELECT 1 FROM sqlite_schema WHERE (tbl_name = ?1 COLLATE NOCASE AND sql IS NOT NULL "
-            "AND type IN ('index', 'trigger')) OR (type = 'view' AND instr(lower(sql), lower(?1)) > 0) "
-            "UNION ALL SELECT 1 FROM sqlite_schema AS s JOIN pragma_foreign_key_list(s.name) AS fk "
-            "WHERE s.type = 'table' AND (s.name = ?1 COLLATE NOCASE OR fk.[table] = ?1 COLLATE NOCASE)",
-            tableName_);
-        if (!dependencies.empty()) schemaError("legacy users table has dependent schema objects");
-
-        const auto replacement = quoteIdentifier("__app_users_migration");
-        co_await executeSql("CREATE TABLE " + replacement + " (" + definitions + ")");
-        co_await executeSql("INSERT INTO " + replacement + " (username, password_hash, seed_key) "
-                            "SELECT username, password_hash, seed_key FROM " + table_ + " ORDER BY username");
-        co_await executeSql("DROP TABLE " + table_);
-        co_await executeSql("ALTER TABLE " + replacement + " RENAME TO " + table_);
-    }
-
-    drogon::Task<> renameColumn(std::string oldName, std::string newName) const {
-        const auto matches = co_await executeSql(
-            "SELECT name FROM pragma_table_info(?1) WHERE name IN (?2, ?3)", tableName_, oldName, newName);
-        if (matches.size() > 1) schemaError("both " + oldName + " and " + newName + " exist");
-        if (matches.size() == 1 && matches[0][0].as<std::string>() == oldName) {
-            co_await executeSql("ALTER TABLE " + table_ + " RENAME COLUMN " + quoteIdentifier(oldName) +
-                                " TO " + quoteIdentifier(newName));
-        }
     }
 
     drogon::Task<std::string> tableDefinition() const {
@@ -211,12 +159,14 @@ private:
             if (!column.indexed) continue;
             const auto index = "idx_" + std::to_string(tableName_.size()) + "_" + tableName_ + "_" + column.name;
             co_await executeSql("CREATE INDEX IF NOT EXISTS " + quoteIdentifier(index) +
-                                " ON " + table_ + " (" + quoteIdentifier(column.name) + ")");
+                                " ON " + table_ + " (" + quoteIdentifier(column.name) +
+                                (column.indexDescending ? " DESC)" : ")"));
             const auto indexes = co_await executeSql("SELECT [unique], partial FROM pragma_index_list(?) WHERE name = ?", tableName_, index);
-            const auto fields = co_await executeSql("SELECT name FROM pragma_index_info(?)", index);
+            const auto fields = co_await executeSql("SELECT name, [desc] FROM pragma_index_xinfo(?) WHERE [key] = 1", index);
             if (indexes.size() != 1 || indexes[0][0].template as<int>() != 0 ||
                 indexes[0][1].template as<int>() != 0 || fields.size() != 1 ||
-                fields[0][0].template as<std::string>() != column.name) {
+                fields[0][0].template as<std::string>() != column.name ||
+                fields[0][1].template as<int>() != column.indexDescending) {
                 schemaError("invalid index " + index);
             }
         }
@@ -224,6 +174,29 @@ private:
 
     [[noreturn]] void schemaError(const std::string& detail) const {
         throw std::runtime_error("Schema mismatch for " + tableName_ + ": " + detail + "; explicit migration required");
+    }
+
+    static std::string enumConstraintName(const DatabaseColumn& field) {
+        return "CONSTRAINT " + quoteIdentifier("dao_enum_" + field.name) + " ";
+    }
+
+    static std::string enumConstraint(const DatabaseColumn& field) {
+        auto check = enumConstraintName(field) + "CHECK (" + quoteIdentifier(field.name) + " IN (";
+        for (std::size_t i = 0; i < field.enumLabels.size(); ++i) {
+            if (i != 0) check += ", ";
+            check += sqlLiteral(std::string(field.enumLabels[i]));
+        }
+        return check + "))";
+    }
+
+    drogon::Task<> validateEnumConstraints() const {
+        const auto definition = co_await tableDefinition();
+        for (const auto& field : schema_) {
+            if (field.enumLabels.empty() ? definition.contains(enumConstraintName(field))
+                                         : !definition.contains(enumConstraint(field))) {
+                schemaError("enum constraint for " + field.name);
+            }
+        }
     }
 
     static std::string columnDefinition(const DatabaseColumn& field) {
@@ -237,6 +210,7 @@ private:
             definition += " REFERENCES " + quoteIdentifier(target->table) + " (" +
                           quoteIdentifier(target->column) + ") ON UPDATE RESTRICT ON DELETE RESTRICT";
         }
+        if (!field.enumLabels.empty()) definition += " " + enumConstraint(field);
         return definition;
     }
 
@@ -322,7 +296,6 @@ private:
     const drogon::orm::DbClientPtr& client_;
     std::string tableName_, table_;
     std::vector<DatabaseColumn> schema_;
-    LegacyMigration migration_;
 };
 
 class SqliteBackend final : public DatabaseBackend {
@@ -331,16 +304,18 @@ public:
 
     const drogon::orm::DbClientPtr& client() const override { return client_; }
     std::string parameter(std::size_t index) const override { return "?" + std::to_string(index); }
+    std::string containsText(std::string_view column, std::size_t index) const override {
+        return "instr(" + std::string(column) + ", " + parameter(index) + ") > 0";
+    }
     std::string nullSafeEqual(std::string_view column, std::size_t index) const override {
         return std::string(column) + " IS " + parameter(index);
     }
     std::optional<std::reference_wrapper<drogon::Mutex>> queryGate() const override { return std::ref(gate_); }
 
     // The single SQLite connection must be reserved for the entire schema transaction.
-    drogon::Task<> initializeTable(std::string table, std::vector<DatabaseColumn> columns,
-                                    LegacyMigration migration) override {
+    drogon::Task<> initializeTable(std::string table, std::vector<DatabaseColumn> columns) override {
         const auto lock = co_await gate_.scoped_lock();
-        const SqliteSchema schema(client_, std::move(table), std::move(columns), migration);
+        const SqliteSchema schema(client_, std::move(table), std::move(columns));
         co_await schema.apply();
     }
 

@@ -13,26 +13,29 @@
 namespace APP_NAMESPACE {
 
 struct UserFields {
-    static constexpr std::string_view table_name = "users";
+  static constexpr std::string_view table_name = "users";
 
-    Unique<std::string> username;
-    std::string password_hash;
-    Unique<std::optional<std::string>> seed_key;
+  Unique<std::string> username;
+  std::string password_hash;
+  Unique<std::optional<std::string>> seed_key;
 };
 
 using UserRecord = DaoRecord<UserFields>;
 
 class UserDao final : public BaseDao<UserDao, UserRecord> {
 public:
-    static drogon::Task<UserDao> init(DatabaseBackendPtr database);
+  static drogon::Task<UserDao> init(DatabaseBackendPtr database);
 
-    drogon::Task<std::optional<UserRecord>> findByUsername(std::string username) const;
-    drogon::Task<bool> hasDemo() const;
-    drogon::Task<bool> insertDemo(std::string username, std::string password_hash) const;
-    drogon::Task<> replaceDemo(std::string username, std::string password_hash) const;
+  drogon::Task<std::optional<UserRecord>>
+  findByUsername(std::string username) const;
+  drogon::Task<bool> hasDemo() const;
+  drogon::Task<bool> insertDemo(std::string username,
+                                std::string password_hash) const;
+  drogon::Task<> replaceDemo(std::string username,
+                             std::string password_hash) const;
 
 private:
-    explicit UserDao(DatabaseBackendPtr database);
+  explicit UserDao(DatabaseBackendPtr database);
 };
 
-}
+} // namespace APP_NAMESPACE

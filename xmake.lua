@@ -30,6 +30,7 @@ if is_plat("macosx") then
 	add_requireconfs("cpr.libcurl.openssl3", { private = true })
 end
 add_requires("dotenv-cpp 9275210b8abf1a551fb81e0ba45866286d764acd", "glaze v7.0.2", "jwt-cpp 0.7.2")
+add_requires("magic_enum v0.9.8")
 add_requires("simdjson", "libsodium", "catch2 3.x")
 
 option("app_namespace")
@@ -55,7 +56,17 @@ add_options("app_namespace")
 add_defines("APP_NAMESPACE=$(app_namespace)", { public = true })
 add_files("src/**.cpp|main.cpp")
 add_includedirs("src", { public = true })
-add_packages("drogon", "cpr", "dotenv-cpp", "glaze", "jwt-cpp", "simdjson", "libsodium", { public = true })
+add_packages(
+	"drogon",
+	"cpr",
+	"dotenv-cpp",
+	"glaze",
+	"jwt-cpp",
+	"simdjson",
+	"libsodium",
+	"magic_enum",
+	{ public = true }
+)
 
 rule("drogon.view")
 set_extensions(".csp")

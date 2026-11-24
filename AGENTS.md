@@ -28,6 +28,12 @@ Use four spaces and place opening braces on the declaration line. Use `.hpp` for
 
 Prefer values for direct ownership and references for required borrows. Use `std::optional<std::reference_wrapper<T>>` for optional borrows and smart pointers for explicit heap ownership. Avoid raw pointers in application interfaces. Adapt third-party APIs that require raw pointers at the integration boundary.
 
+## Database and Service Layers
+
+- Define persistent fields in a snake_case aggregate with a static `table_name`. Wrap it in `DaoRecord<Fields>` and derive the entity DAO from `BaseDao<Derived, Record>`. Use field annotations for keys, constraints, indexes, defaults, and foreign references. See the [README database example](README.md#database-example).
+- Open the database backend once at startup and pass it to each DAO's async `init(database)`. Initialize parent DAOs before DAOs that reference them. Use the base DAO's coroutine CRUD methods and typed filters for ordinary queries. Keep custom SQL in the DAO, and bind runtime values through `executeSql`.
+- Give each service its initialized DAO by value and keep business logic in the service. Register services in the server's `Services` container. Route handlers should validate requests, `co_await` service methods, and build responses. Keep database queries and persistence records inside the service and DAO layers.
+
 ## Testing
 
 Run `xmake test` to run Catch2. Name test files `*_tests.cpp` and describe observable behavior in test case names. Use temporary state and a loopback fixture for upstream calls. Smoke-test HTTP changes through the demo page and verify returned download links.

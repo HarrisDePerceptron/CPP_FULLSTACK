@@ -1,6 +1,8 @@
 #pragma once
 
-#include "app_namespace.hpp"
+#include "dao_datetime.hpp"
+
+#include <magic_enum/magic_enum.hpp>
 
 #include <concepts>
 #include <cstdint>
@@ -11,12 +13,13 @@
 #include <type_traits>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace APP_NAMESPACE {
 
 enum class ColumnType { text, integer, boolean, real, datetime };
 
-using ColumnDefault = std::variant<std::string, std::int64_t, bool, double>;
+using ColumnDefault = std::variant<std::string, std::int64_t, bool, double, DaoDateTime>;
 
 struct ForeignKey {
     std::string_view table, column;
@@ -30,6 +33,8 @@ struct DatabaseColumn {
     bool generated = false;
     bool timestamp = false;
     std::optional<ForeignKey> foreignKey;
+    std::vector<std::string_view> enumLabels;
+    bool indexDescending = false;
 };
 
 enum class ColumnConstraint { primary, unique, indexed };
@@ -60,10 +65,6 @@ struct SqlText {
     constexpr std::string_view view() const { return {chars, N - 1}; }
 };
 
-struct SqlReal {
-    double value;
-};
-
 namespace detail {
 
 template <typename T> struct Nullable {
@@ -75,6 +76,13 @@ template <typename T> struct Nullable<std::optional<T>> {
     static constexpr bool nullable = true;
 };
 
+template <typename E>
+constexpr std::string_view enumLabel(E value) {
+    const auto label = magic_enum::enum_name(value);
+    if (label.empty()) throw std::invalid_argument("unrecognized DAO enum value");
+    return label;
+}
+
 template <typename T, auto Value>
 auto defaultValue() {
     using Scalar = typename Nullable<T>::Type;
@@ -82,6 +90,13 @@ auto defaultValue() {
         constexpr auto text = Value.view();
         static_assert(text.find('\0') == std::string_view::npos, "SQL text defaults cannot contain NUL");
         return std::string(text);
+    } else if constexpr (std::is_scoped_enum_v<Scalar>) {
+        static_assert(std::same_as<decltype(Value), Scalar>, "enum default must match the field type");
+        static_assert(!enumLabel(Value).empty());
+        return Scalar(Value);
+    } else if constexpr (std::same_as<Scalar, DaoDateTime>) {
+        constexpr auto datetime = parseDaoDateTime(Value.view());
+        return datetime;
     } else if constexpr (std::same_as<Scalar, bool>) {
         static_assert(std::same_as<decltype(Value), bool>, "boolean defaults require true or false");
         return Value;
@@ -90,9 +105,9 @@ auto defaultValue() {
                       "integer default must fit the field");
         return static_cast<Scalar>(Value);
     } else {
-        static_assert(std::same_as<Scalar, double> && std::same_as<decltype(Value), SqlReal>,
-                      "real defaults require SqlReal");
-        constexpr double number = Value.value;
+        static_assert(std::same_as<Scalar, double> && std::same_as<decltype(Value), double>,
+                      "real defaults require a double template argument");
+        constexpr double number = Value;
         static_assert(number >= -std::numeric_limits<double>::max() &&
                       number <= std::numeric_limits<double>::max(), "default must be finite");
         return number;
@@ -127,7 +142,9 @@ template <typename T, auto Initial>
 struct FieldTraits<Default<T, Initial>> : FieldTraits<T> {
     static T& unwrap(Default<T, Initial>& field) { return field.value; }
     static std::optional<ColumnDefault> defaultMetadata() { auto value = defaultValue<T, Initial>();
-        if constexpr (std::signed_integral<decltype(value)>) {
+        if constexpr (std::is_scoped_enum_v<decltype(value)>) {
+            return ColumnDefault{std::string(enumLabel(value))};
+        } else if constexpr (std::signed_integral<decltype(value)>) {
             return ColumnDefault{static_cast<std::int64_t>(value)};
         } else {
             return ColumnDefault{std::move(value)};
@@ -148,10 +165,11 @@ struct FieldTraits<SchemaField<T, Constraint>> : FieldTraits<T> {
 
 template <typename T>
 constexpr ColumnType columnType() {
-    if constexpr (std::same_as<T, std::string>) return ColumnType::text;
+    if constexpr (std::same_as<T, std::string> || std::is_scoped_enum_v<T>) return ColumnType::text;
     else if constexpr (std::same_as<T, bool>) return ColumnType::boolean;
     else if constexpr (std::signed_integral<T>) return ColumnType::integer;
     else if constexpr (std::same_as<T, double>) return ColumnType::real;
+    else if constexpr (std::same_as<T, DaoDateTime>) return ColumnType::datetime;
     else static_assert(!sizeof(T), "unsupported database field type");
 }
 

@@ -134,6 +134,14 @@
             },
             version = "1.4.19"
         },
+        ["magic_enum v0.9.8#f56260b5"] = {
+            repo = {
+                branch = "master",
+                commit = "9bf30fdddc25f58bf7c966da383c8659246e0a3d",
+                url = "https://github.com/xmake-io/xmake-repo.git"
+            },
+            version = "v0.9.8"
+        },
         ["ninja#f56260b5"] = {
             repo = {
                 branch = "master",
