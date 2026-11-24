@@ -1,0 +1,11 @@
+{
+    "name": "hello-demo-assets",
+    "private": true,
+    "scripts": {
+        "build:css": "tailwindcss -i ./web/demo.css -o ./public/demo.css --minify"
+    },
+    "devDependencies": {
+        "@tailwindcss/cli": "4.1.16",
+        "tailwindcss": "4.1.16"
+    }
+}

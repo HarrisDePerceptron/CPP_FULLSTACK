@@ -1,75 +1,53 @@
+set_project("hello")
+set_languages("cxx26")
 add_rules("mode.debug", "mode.release")
+set_policy("package.requires_lock", true)
+
+package("dotenv-cpp")
+set_homepage("https://github.com/laserpants/dotenv-cpp")
+set_license("BSD-3-Clause")
+set_kind("library", { headeronly = true })
+add_urls("https://github.com/laserpants/dotenv-cpp.git")
+on_install(function(package)
+	local headers = package:installdir("include", "laserpants", "dotenv")
+	local licenses = package:installdir("share", "licenses", "dotenv-cpp")
+	os.mkdir(headers, licenses)
+	os.cp("include/laserpants/dotenv/dotenv.h", headers)
+	os.cp("LICENSE", licenses)
+end)
+package_end()
+
+if is_host("macosx") then
+	-- Autoconf cannot use the older m4 shipped with macOS.
+	add_requireconfs("**.m4", { version = ">=1.4.16", override = true })
+end
+
+add_requires("drogon v1.9.12", { configs = { cpp20 = true } })
+add_requires("cpr 1.12.0")
+if is_plat("macosx") then
+	-- Keep libcurl's OpenSSL 3 inside its shared library so Trantor can link OpenSSL 1.1.
+	add_requireconfs("cpr.libcurl", { configs = { shared = true } })
+	add_requireconfs("cpr.libcurl.openssl3", { private = true })
+end
+add_requires("dotenv-cpp 9275210b8abf1a551fb81e0ba45866286d764acd", "glaze v7.0.2", "jwt-cpp 0.7.2")
+add_requires("simdjson", "sqlite3", "libsodium", "catch2 3.x")
+
+target("hello_core")
+set_kind("static")
+add_files("src/*.cpp|main.cpp")
+add_includedirs("src", { public = true })
+add_packages("drogon", "cpr", "dotenv-cpp", "glaze", "jwt-cpp", "simdjson", "sqlite3", "libsodium", { public = true })
 
 target("hello")
-    set_kind("binary")
-    add_files("src/*.cpp")
+set_kind("binary")
+add_files("src/main.cpp")
+add_deps("hello_core")
+set_rundir("$(projectdir)")
 
---
--- If you want to known more usage about xmake, please see https://xmake.io
---
--- ## FAQ
---
--- You can enter the project directory firstly before building project.
---
---   $ cd projectdir
---
--- 1. How to build project?
---
---   $ xmake
---
--- 2. How to configure project?
---
---   $ xmake f -p [macosx|linux|iphoneos ..] -a [x86_64|i386|arm64 ..] -m [debug|release]
---
--- 3. Where is the build output directory?
---
---   The default output directory is `./build` and you can configure the output directory.
---
---   $ xmake f -o outputdir
---   $ xmake
---
--- 4. How to run and debug target after building project?
---
---   $ xmake run [targetname]
---   $ xmake run -d [targetname]
---
--- 5. How to install target to the system directory or other output directory?
---
---   $ xmake install
---   $ xmake install -o installdir
---
--- 6. Add some frequently-used compilation flags in xmake.lua
---
--- @code
---    -- add debug and release modes
---    add_rules("mode.debug", "mode.release")
---
---    -- add macro definition
---    add_defines("NDEBUG", "_GNU_SOURCE=1")
---
---    -- set warning all as error
---    set_warnings("all", "error")
---
---    -- set language: c99, c++11
---    set_languages("c99", "c++11")
---
---    -- set optimization: none, faster, fastest, smallest
---    set_optimize("fastest")
---
---    -- add include search directories
---    add_includedirs("/usr/include", "/usr/local/include")
---
---    -- add link libraries and search directories
---    add_links("tbox")
---    add_linkdirs("/usr/local/lib", "/usr/lib")
---
---    -- add system link libraries
---    add_syslinks("z", "pthread")
---
---    -- add compilation and link flags
---    add_cxflags("-stdnolib", "-fno-strict-aliasing")
---    add_ldflags("-L/usr/local/lib", "-lpthread", {force = true})
---
--- @endcode
---
-
+target("hello_tests")
+set_kind("binary")
+set_default(false)
+add_files("tests/*.cpp")
+add_deps("hello_core")
+add_packages("catch2", { components = { "main", "lib" } })
+add_tests("suite", { run_timeout = 30000 })

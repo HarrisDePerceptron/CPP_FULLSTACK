@@ -2,28 +2,29 @@
 
 ## Project Structure
 
-- `src/main.cpp` contains the entry point for the `hello` C++ executable.
-- `xmake.lua` defines the executable and its debug and release build modes. The target automatically includes `src/*.cpp`. Update the source pattern if you introduce nested source directories.
-- `build/` contains generated build output, and `.xmake/` stores local Xmake configuration and cache data. Both are ignored by Git.
-- The project currently has no dedicated test or asset directories.
+- `src/main.cpp` starts the Drogon server. `src/server.cpp` registers routes and middleware. Neighboring files handle configuration, users, JWTs, uploads, and upstream content.
+- `public/` holds the HTML, JavaScript, compiled Tailwind CSS, and runtime uploads. `web/demo.css` is the Tailwind source. `tests/` contains the Catch2 suite.
+- Xmake writes compiled output to `build/` and keeps local build configuration in `.xmake/`.
 
 ## Build and Run
 
-Run these commands from the project root with Xmake and a C++ toolchain installed.
+Run commands from the project root with Xmake and a C++26 compiler and standard library that support `std::println`.
 
-- `xmake` builds the executable with the active configuration.
-- `xmake run hello` runs the executable.
-- `xmake f -m debug` selects debug mode. Run `xmake` again to build, then use `xmake run -d hello` to launch the debugger.
-- `xmake f -m release` selects release mode. Run `xmake` again to build.
+- `xmake f -m debug` or `xmake f -m release` selects the build mode.
+- `xmake` resolves dependencies and builds the server. First-time dependency resolution requires network access or a populated Xmake cache.
+- `xmake run hello` starts the server at `http://127.0.0.1:8080` with the default `config.json`. Save the demo credentials printed on first launch. SQLite stores the account under `.local/`.
+- After editing the page or Tailwind source, run `npm ci` and `npm run build:css`. Commit the regenerated `public/demo.css`.
+
+The optional `.env` supplies `HELLO_JWT_SECRET`. See `.env.example` for the format. An existing environment variable takes precedence. Without a configured key, a server restart invalidates previously issued tokens. Keep `.env`, database files, and uploaded content out of commits.
 
 ## Coding Style
 
-Match the existing C++ style in `src/main.cpp`. Use four spaces per indentation level, place the opening brace on the function declaration line, and use `.cpp` for implementation files. Keep standard-library includes at the top. No formatter or linter is configured.
+Use four spaces and place opening braces on the declaration line. Use `.hpp` for C++ headers and `.cpp` for implementations. Keep route handlers small and delegate persistence and outbound calls to their modules. Always use `co_await` for asynchronous application code and `std::println` for console output, including logs. Use `jsonResponse` for typed API responses.
 
 ## Testing
 
-The project has no automated test framework or coverage threshold. After changing the program or build configuration, run `xmake` and `xmake run hello`. The current smoke check is that the executable prints `hello world!` on one line and exits successfully. If you change that behavior intentionally, verify the new output and exit status.
+Run `xmake test` to run Catch2. Name test files `*_tests.cpp` and describe observable behavior in test case names. Use temporary state and a loopback fixture for upstream calls. Smoke-test HTTP changes through the demo page and verify returned download links.
 
 ## Commits and Pull Requests
 
-Use a short, imperative commit subject, such as `Add command-line greeting`. In the pull request, summarize the behavior change, report the commands you ran and their results, and link a related issue if one exists.
+Use a short imperative subject with a prefix such as `feat: add upload route`. Summarize the change, report verification results, and link a related issue when one exists.
