@@ -1,13 +1,17 @@
 #pragma once
 
 #include "database_backend.hpp"
+#include "dao_record.hpp"
 #include "row_to_struct.hpp"
 
 #include <drogon/orm/DbClient.h>
 #include <drogon/utils/coroutine.h>
 #include <glaze/reflection/get_name.hpp>
 
+#include <algorithm>
+#include <array>
 #include <concepts>
+#include <tuple>
 #include <cstdint>
 #include <vector>
 
@@ -41,8 +45,20 @@ auto where(Value&& value) {
     return detail::DaoPredicate<Member>{Type(std::forward<Value>(value))};
 }
 
-template <typename Derived, glz::reflectable Record, typename Id>
+struct DaoOptions { bool timestamps = true; };
+
+template <typename Derived, typename Record, DaoOptions Options = {}>
 class BaseDao {
+    using Fields = typename Record::FieldRecord;
+    using Id = typename Record::Id;
+
+    template <auto Member>
+    static constexpr bool recordMember =
+        std::same_as<Fields, typename detail::DaoPredicate<Member>::Record> ||
+        std::same_as<detail::DaoTimestamps<Fields>, typename detail::DaoPredicate<Member>::Record> ||
+        (Record::generatedId &&
+         std::same_as<detail::DaoGeneratedKey<Fields, true>, typename detail::DaoPredicate<Member>::Record>);
+
 public:
     drogon::Task<std::vector<Record>> find(std::int64_t limit = 100, std::int64_t offset = 0) const {
         return findPage(limit, offset);
@@ -50,14 +66,14 @@ public:
 
     template <auto... Members>
         requires (sizeof...(Members) > 0)
-            && (std::same_as<Record, typename detail::DaoPredicate<Members>::Record> && ...)
+            && (recordMember<Members> && ...)
     drogon::Task<std::vector<Record>> find(detail::DaoPredicate<Members>... predicates) const {
         return findPage(100, 0, std::move(predicates)...);
     }
 
     template <auto... Members>
         requires (sizeof...(Members) > 0)
-            && (std::same_as<Record, typename detail::DaoPredicate<Members>::Record> && ...)
+            && (recordMember<Members> && ...)
     drogon::Task<std::vector<Record>> find(
         std::int64_t limit, std::int64_t offset, detail::DaoPredicate<Members>... predicates) const {
         return findPage(limit, offset, std::move(predicates)...);
@@ -66,15 +82,18 @@ public:
     drogon::Task<std::optional<Record>> findById(Id id) const {
         const auto rows = co_await executeSql(select_ + " WHERE " + key_ + " = " + parameter(1), std::move(id));
         if (rows.empty()) co_return std::nullopt;
-        co_return rowToStruct<Record>(rows[0]);
+        co_return mapRow(rows[0]);
     }
 
-    drogon::Task<> create(Record record) const {
-        co_await writeRecord(insert_, record);
+    drogon::Task<Id> create(Record record) const {
+        checkId<true>(record);
+        const auto result = co_await writeRecord<true>(insert_, record);
+        co_return result[0][0].template as<Id>();
     }
 
     drogon::Task<bool> update(Record record) const {
-        const auto result = co_await writeRecord(update_, record);
+        checkId<false>(record);
+        const auto result = co_await writeRecord<false>(update_, record);
         co_return result.affectedRows() != 0;
     }
 
@@ -94,39 +113,33 @@ public:
         return execute(std::move(sql), ownArgument(std::forward<Args>(args))...);
     }
 
-    static drogon::Task<Derived> init(DatabaseBackendPtr database) {
-        if (!database) throw std::invalid_argument("DAO requires a database backend");
-        Derived dao(std::move(database));
+protected:
+    static drogon::Task<Derived> finishInitialization(Derived dao) {
         auto& base = static_cast<BaseDao&>(dao);
-        co_await base.database_->initializeTable(base.tableName_, std::move(base.schema_));
+        co_await base.database_->initializeTable(base.tableName_, std::move(base.schema_), base.migration_);
         co_return std::move(dao);
     }
-
-private:
-    friend Derived;
 
     BaseDao(const BaseDao&) = delete;
     BaseDao& operator=(const BaseDao&) = delete;
     BaseDao(BaseDao&&) noexcept = default;
     BaseDao& operator=(BaseDao&&) noexcept = default;
 
-    BaseDao(DatabaseBackendPtr database, std::string_view table)
-        : database_(std::move(database)), tableName_(table), table_(detail::quoteIdentifier(table)) {
-        buildSchema(std::make_index_sequence<glz::reflect<Record>::keys.size()>{});
+    BaseDao(DatabaseBackendPtr database, std::string_view table,
+            LegacyMigration migration = LegacyMigration::none)
+        : database_(std::move(database)), tableName_(table), table_(detail::quoteIdentifier(table)),
+          migration_(migration) {
+        if (!database_) throw std::invalid_argument("DAO requires a database backend");
+        buildSchema(indices_);
         std::string projection, columns, placeholders, assignments, keyParameter;
-        constexpr auto members = glz::reflect<Record>::keys;
-        for (std::size_t i = 0; i < schema_.size(); ++i) {
-            const auto& field = schema_[i];
-            if (i != 0) {
-                projection += ", ";
-                columns += ", ";
-                placeholders += ", ";
-            }
+        std::size_t insertIndex = 0, updateIndex = 0;
+        for (const auto& field : schema_) {
             const auto column = detail::quoteIdentifier(field.name);
-            projection += column + " AS " + detail::quoteIdentifier(members[i]);
-            columns += column;
-            const auto marker = parameter(i + 1);
-            placeholders += marker;
+            if (!projection.empty()) projection += ", ";
+            projection += column;
+            if (field.timestamp) continue;
+
+            const auto marker = parameter(++updateIndex);
             if (field.primary) {
                 key_ = column;
                 keyParameter = marker;
@@ -134,32 +147,87 @@ private:
                 if (!assignments.empty()) assignments += ", ";
                 assignments += column + " = " + marker;
             }
+            if (!field.generated) {
+                if (!columns.empty()) {
+                    columns += ", ";
+                    placeholders += ", ";
+                }
+                columns += column;
+                placeholders += parameter(++insertIndex);
+            }
         }
         if (assignments.empty()) assignments = key_ + " = " + key_;
         update_ = "UPDATE " + table_ + " SET " + assignments + " WHERE " + key_ + " = " + keyParameter;
         select_ = "SELECT " + projection + " FROM " + table_;
-        insert_ = "INSERT INTO " + table_ + " (" + columns + ") VALUES (" + placeholders + ")";
+        insert_ = "INSERT INTO " + table_;
+        if (columns.empty()) insert_ += " DEFAULT VALUES";
+        else insert_ += " (" + columns + ") VALUES (" + placeholders + ")";
+        insert_ += " RETURNING " + key_;
     }
 
     std::string parameter(std::size_t index) const { return database_->parameter(index); }
 
+private:
+    static constexpr std::array<std::string_view, 2> timestampNames_{"created_at", "updated_at"};
+    static constexpr auto names_ = glz::reflect<Fields>::keys;
+    static constexpr auto indices_ = std::make_index_sequence<names_.size()>{};
+
+    Record mapRow(const drogon::orm::Row& row) const {
+        Record result(rowToStruct<Fields>(row));
+        if constexpr (Record::generatedId) result.id = row.at("id").template as<Id>();
+        if constexpr (Options.timestamps) {
+            result.created_at = readTimestamp(row.at("created_at"));
+            result.updated_at = readTimestamp(row.at("updated_at"));
+        }
+        return result;
+    }
+
+    static std::optional<DaoDateTime> readTimestamp(const drogon::orm::Field& field) {
+        if (field.isNull()) return std::nullopt;
+        return detail::parseDaoDateTime(field.as<std::string>());
+    }
+
+    static constexpr bool timestampName(std::string_view name) {
+        return std::ranges::find(timestampNames_, name) != timestampNames_.end();
+    }
+
     template <std::size_t I>
-    using Traits = detail::FieldTraits<std::remove_cvref_t<decltype(
-        glz::get<I>(glz::to_tie(std::declval<Record&>())))>>;
+    using Traits = detail::DaoFieldTraits<Fields, I>;
 
     template <std::size_t I>
     using Value = detail::Nullable<typename Traits<I>::Value>;
 
+    template <std::size_t I>
+    void addField() {
+        constexpr auto name = names_[I];
+        static_assert(!timestampName(name) && (!Record::generatedId || name != "id"),
+                      "reserved DAO fields are inherited");
+        schema_.push_back({std::string(name), detail::columnType<typename Value<I>::Type>(),
+                           Value<I>::nullable, Traits<I>::primary, Traits<I>::unique, Traits<I>::indexed,
+                           Traits<I>::defaultMetadata()});
+    }
+
     template <std::size_t... I>
     void buildSchema(std::index_sequence<I...>) {
-        static_assert((0 + ... + int(Traits<I>::primary)) == 1, "exactly one primary field is required");
-        static_assert(((!Traits<I>::primary ||
-            (!Value<I>::nullable && std::same_as<typename Value<I>::Type, Id>)) && ...),
-            "primary field must be nonnullable and match the DAO ID type");
-        constexpr auto names = glz::reflect<Record>::keys;
-        (schema_.push_back({snakeCase(names[I]), detail::columnType<typename Value<I>::Type>(),
-                           Value<I>::nullable, Traits<I>::primary, Traits<I>::unique, Traits<I>::indexed,
-                           Traits<I>::defaultMetadata()}), ...);
+        (addField<I>(), ...);
+        if constexpr (Record::generatedId) {
+            schema_.push_back({"id", ColumnType::integer, false, true, false, false, {}, true});
+        }
+        if constexpr (Options.timestamps) {
+            for (const auto name : timestampNames_) {
+                schema_.push_back({std::string(name), ColumnType::datetime, true, false, false, false, {}, false, true});
+            }
+        }
+    }
+
+    template <bool Insert>
+    static void checkId(const Record& record) {
+        if constexpr (Record::generatedId) {
+            if (record.id.has_value() == Insert) {
+                throw std::invalid_argument(Insert ? "create requires an empty generated ID" :
+                                             "update requires a generated ID");
+            }
+        }
     }
 
     template <auto... Members>
@@ -171,7 +239,10 @@ private:
             auto separator = " WHERE ";
             std::size_t index = 0;
             auto append = [&](std::string_view name) {
-                sql += separator + database_->nullSafeEqual(detail::quoteIdentifier(snakeCase(name)), ++index);
+                if (!Options.timestamps && timestampName(name)) {
+                    throw std::invalid_argument("timestamp filters require timestamps to be enabled");
+                }
+                sql += separator + database_->nullSafeEqual(detail::quoteIdentifier(name), ++index);
                 separator = " AND ";
             };
             (append(detail::DaoPredicate<Members>::name), ...);
@@ -181,20 +252,29 @@ private:
         const auto rows = co_await executeSql(std::move(sql), std::move(predicates.value)..., limit, offset);
         std::vector<Record> records;
         records.reserve(rows.size());
-        for (const auto& row : rows) records.push_back(rowToStruct<Record>(row));
+        for (const auto& row : rows) records.push_back(mapRow(row));
         co_return records;
     }
 
+    template <bool Insert>
     drogon::Task<drogon::orm::Result> writeRecord(const std::string& sql, Record& record) const {
-        auto fields = glz::to_tie(record);
+        auto fields = glz::to_tie(static_cast<Fields&>(record));
         return [&]<std::size_t... I>(std::index_sequence<I...>) {
-            return executeSql(sql, Traits<I>::unwrap(glz::get<I>(fields))...);
-        }(std::make_index_sequence<glz::reflect<Record>::keys.size()>{});
+            if constexpr (!Insert && Record::generatedId) {
+                return executeSql(sql, Traits<I>::unwrap(glz::get<I>(fields))..., *record.id);
+            } else {
+                return executeSql(sql, Traits<I>::unwrap(glz::get<I>(fields))...);
+            }
+        }(indices_);
     }
 
     template <typename T>
     static auto ownArgument(T&& value) {
-        if constexpr (std::is_convertible_v<T, std::string_view>
+        if constexpr (std::same_as<std::remove_cvref_t<T>, DaoDateTime>) {
+            return detail::formatDaoDateTime(value);
+        } else if constexpr (std::same_as<std::remove_cvref_t<T>, std::optional<DaoDateTime>>) {
+            return value ? std::optional{detail::formatDaoDateTime(*value)} : std::nullopt;
+        } else if constexpr (std::is_convertible_v<T, std::string_view>
                       && !std::is_same_v<std::decay_t<T>, std::nullptr_t>) {
             return std::string(std::forward<T>(value));
         } else {
@@ -211,22 +291,10 @@ private:
         co_return co_await detail::executeOn(database_->client(), std::move(sql), std::move(args)...);
     }
 
-    static std::string snakeCase(std::string_view name) {
-        std::string column;
-        for (const char character : name) {
-            if (character >= 'A' && character <= 'Z') {
-                if (!column.empty()) column += '_';
-                column += static_cast<char>(character - 'A' + 'a');
-            } else {
-                column += character;
-            }
-        }
-        return column;
-    }
-
     DatabaseBackendPtr database_;
     std::string tableName_, table_, key_, select_, insert_, update_;
     std::vector<DatabaseColumn> schema_;
+    LegacyMigration migration_;
 };
 
 }

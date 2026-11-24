@@ -34,10 +34,10 @@ drogon::Task<> UserService::configureDemo(std::string username, std::string pass
 }
 
 drogon::Task<bool> UserService::authenticate(std::string username, std::string password, Workers& workers) const {
-    const auto user = co_await dao_.findById(std::move(username));
+    const auto user = co_await dao_.findByUsername(std::move(username));
     if (!user) co_return false;
     co_return co_await workers.submit([&] {
-        return crypto_pwhash_str_verify(user->passwordHash.c_str(), password.data(), password.size()) == 0;
+        return crypto_pwhash_str_verify(user->password_hash.c_str(), password.data(), password.size()) == 0;
     });
 }
 

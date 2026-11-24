@@ -16,13 +16,16 @@
 
 namespace APP_NAMESPACE {
 
+enum class LegacyMigration { none, usersUsernameKey };
+
 class DatabaseBackend {
 public:
     virtual ~DatabaseBackend() = default;
     virtual const drogon::orm::DbClientPtr& client() const = 0;
     virtual std::string parameter(std::size_t index) const = 0;
     virtual std::string nullSafeEqual(std::string_view column, std::size_t index) const = 0;
-    virtual drogon::Task<> initializeTable(std::string table, std::vector<DatabaseColumn> columns) = 0;
+    virtual drogon::Task<> initializeTable(
+        std::string table, std::vector<DatabaseColumn> columns, LegacyMigration migration) = 0;
     virtual std::optional<std::reference_wrapper<drogon::Mutex>> queryGate() const { return std::nullopt; }
 };
 

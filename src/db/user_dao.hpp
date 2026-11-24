@@ -12,20 +12,24 @@
 
 namespace APP_NAMESPACE {
 
-struct UserRecord {
-    Primary<std::string> username;
-    std::string passwordHash;
-    Unique<std::optional<std::string>> seedKey;
+struct UserFields {
+    Unique<std::string> username;
+    std::string password_hash;
+    Unique<std::optional<std::string>> seed_key;
 };
 
-class UserDao final : public BaseDao<UserDao, UserRecord, std::string> {
+using UserRecord = DaoRecord<UserFields>;
+
+class UserDao final : public BaseDao<UserDao, UserRecord> {
 public:
+    static drogon::Task<UserDao> init(DatabaseBackendPtr database);
+
+    drogon::Task<std::optional<UserRecord>> findByUsername(std::string username) const;
     drogon::Task<bool> hasDemo() const;
-    drogon::Task<bool> insertDemo(std::string username, std::string passwordHash) const;
-    drogon::Task<> replaceDemo(std::string username, std::string passwordHash) const;
+    drogon::Task<bool> insertDemo(std::string username, std::string password_hash) const;
+    drogon::Task<> replaceDemo(std::string username, std::string password_hash) const;
 
 private:
-    friend class BaseDao<UserDao, UserRecord, std::string>;
     explicit UserDao(DatabaseBackendPtr database);
 };
 

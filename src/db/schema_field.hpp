@@ -14,7 +14,7 @@
 
 namespace APP_NAMESPACE {
 
-enum class ColumnType { text, integer, boolean, real };
+enum class ColumnType { text, integer, boolean, real, datetime };
 
 using ColumnDefault = std::variant<std::string, std::int64_t, bool, double>;
 
@@ -23,6 +23,8 @@ struct DatabaseColumn {
     ColumnType type;
     bool nullable, primary, unique, indexed;
     std::optional<ColumnDefault> defaultValue;
+    bool generated = false;
+    bool timestamp = false;
 };
 
 enum class ColumnConstraint { primary, unique, indexed };
