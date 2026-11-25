@@ -3,16 +3,21 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Sign in | Social feed</title>
+    <title>Login</title>
+    <script src="/public/theme.js"></script>
     <link rel="stylesheet" href="/public/demo.css">
     <script defer src="/public/social.js"></script>
 </head>
-<body class="bg-sheet text-ink">
-    <main class="mx-auto max-w-md px-4 py-12 sm:py-20">
-        <a href="/" class="text-sm text-moss underline">App server demo</a>
-        <h1 class="my-3 text-4xl font-bold tracking-tight">Social feed</h1>
-        <form id="account" class="panel space-y-4">
-            <h2 id="account-heading" class="text-2xl font-semibold">Sign in</h2>
+<body class="antialiased">
+    <header class="absolute right-0 top-0 z-10 px-4 py-3 sm:px-7">
+        <button type="button" role="switch" aria-checked="true" class="theme-switch" data-theme-switch hidden>
+            <span class="theme-track" aria-hidden="true"></span>
+            Dark mode
+        </button>
+    </header>
+    <main class="grid min-h-dvh place-items-center px-4 pb-24 pt-16">
+        <form id="account" class="panel w-full max-w-md space-y-5 shadow-xl shadow-black/20">
+            <h1 id="account-heading" class="text-2xl font-semibold">Sign in</h1>
             <p id="signup-hint" class="text-sm text-muted" hidden>Use 3–32 letters, digits, underscores, or hyphens for your username and at least 8 characters for your password.</p>
             <label class="label">Username
                 <input name="username" class="control" autocomplete="username" maxlength="128" required>

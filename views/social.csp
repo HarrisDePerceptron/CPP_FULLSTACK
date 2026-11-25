@@ -3,32 +3,95 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Social feed</title>
+    <title>Feed</title>
+    <script src="/public/theme.js"></script>
     <link rel="stylesheet" href="/public/demo.css">
     <script defer src="/public/social.js"></script>
 </head>
-<body class="bg-sheet text-ink">
-    <main class="mx-auto max-w-2xl space-y-5 px-4 py-8 sm:py-12">
-        <header class="flex flex-wrap items-end justify-between gap-4 border-b border-rule pb-5">
-            <div>
-                <a href="/" class="text-sm text-moss underline">App server demo</a>
-                <h1 class="mt-2 text-4xl font-bold tracking-tight">Social feed</h1>
-                <p id="viewer" class="mt-1 break-all text-sm text-muted"></p>
+<body class="antialiased">
+    <div class="mx-auto max-w-5xl lg:grid lg:grid-cols-[14rem_minmax(0,1fr)] lg:gap-7 lg:px-6">
+        <aside class="relative z-20 px-4 py-3 lg:sticky lg:top-0 lg:flex lg:min-h-dvh lg:flex-col lg:self-start lg:px-0 lg:py-8">
+            <div class="flex items-center gap-2">
+                <button id="account-menu-button" type="button" class="feed-text-action justify-center lg:hidden"
+                    aria-label="Account menu" aria-expanded="false" aria-controls="account-menu">
+                    <svg aria-hidden="true" class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+                </button>
+                <span class="text-lg font-bold tracking-tight">Social Demo</span>
             </div>
-            <button id="sign-out" class="secondary" disabled>Sign out to switch accounts</button>
-        </header>
-        <form id="compose" class="panel space-y-3">
-            <label class="label">New post
-                <textarea class="control resize-y" name="text" rows="3" required aria-describedby="post-limit"></textarea>
-            </label>
-            <div class="flex items-center justify-between gap-3">
-                <span id="post-limit" class="text-sm text-muted">Up to 280 characters</span>
-                <button class="action" disabled>Post</button>
+            <div id="account-menu" class="absolute left-4 top-full hidden w-56 flex-col gap-3 rounded-xl bg-paper p-3 shadow-lg lg:static lg:mt-5 lg:flex lg:w-auto lg:flex-1 lg:rounded-none lg:bg-transparent lg:p-0 lg:shadow-none">
+                <div class="flex min-w-0 items-center gap-2">
+                    <span id="viewer-avatar" class="avatar" aria-hidden="true" hidden></span>
+                    <p id="viewer" class="wrap-anywhere text-sm font-medium" role="status"></p>
+                </div>
+                <button id="sign-out" type="button" class="feed-text-action self-start" disabled>Sign out</button>
+                <p id="account-feedback" role="status" class="text-sm text-danger empty:hidden"></p>
+                <button type="button" role="switch" aria-checked="true" class="theme-switch self-start lg:mt-auto" data-theme-switch hidden>
+                    <span class="theme-track" aria-hidden="true"></span>
+                    Dark mode
+                </button>
             </div>
-        </form>
-        <p id="feed-status" role="status" class="text-sm text-muted">Loading feed…</p>
-        <section id="feed" aria-label="Posts" class="space-y-4"></section>
-        <button id="more-posts" class="secondary" hidden>Load more posts</button>
-    </main>
+        </aside>
+        <main class="min-h-screen min-w-0">
+            <header class="px-4 pb-4 pt-5 sm:px-7 lg:pt-8">
+                <div id="search" class="relative z-10">
+                    <div class="flex items-center gap-2">
+                        <button id="search-back" type="button" class="feed-text-action min-w-11 shrink-0 justify-center"
+                            aria-label="Back to search" hidden>
+                            <svg aria-hidden="true" class="size-5" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M20 12H4m7-7-7 7 7 7"/>
+                            </svg>
+                        </button>
+                        <form id="search-form" role="search" class="search-bar flex min-w-0 flex-1 items-center gap-1 rounded-xl bg-paper px-2">
+                            <label for="search-query" class="sr-only">Search posts and people</label>
+                            <input id="search-query" type="search" class="feed-input min-h-11 min-w-0 flex-1 text-base focus-visible:outline-none"
+                                placeholder="Search posts and people" autocomplete="off" aria-controls="search-results">
+                            <button id="search-clear" type="button" class="feed-text-action shrink-0" hidden>Clear</button>
+                            <button type="submit" class="feed-text-action min-w-11 shrink-0 justify-center" aria-label="Search">
+                                <svg aria-hidden="true" class="size-5" viewBox="0 0 24 24" fill="none"
+                                    stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                                    <circle cx="10.5" cy="10.5" r="6.5"/>
+                                    <path d="m16 16 4 4"/>
+                                </svg>
+                            </button>
+                        </form>
+                    </div>
+                    <div id="search-results" class="absolute inset-x-0 top-full mt-1 max-h-[60dvh] overflow-auto rounded-xl bg-paper p-2 shadow-xl" hidden>
+                        <p id="search-status" class="px-2 py-2 text-sm text-muted empty:hidden" role="status"></p>
+                        <div id="search-matches"></div>
+                    </div>
+                </div>
+                <h1 class="mt-5 text-2xl font-bold tracking-tight">Feed</h1>
+            </header>
+            <section id="selection" aria-labelledby="selection-title" hidden>
+                <div class="px-4 sm:px-7">
+                    <h2 id="selection-title" class="mt-2 wrap-anywhere text-lg font-bold" tabindex="-1"></h2>
+                    <p id="selection-status" class="mt-2 text-sm text-muted empty:hidden" role="status"></p>
+                </div>
+                <div id="selection-posts"></div>
+                <button id="selection-more" type="button" class="feed-text-action mx-4 sm:mx-7" hidden>Load more posts</button>
+            </section>
+            <div id="timeline">
+                <form id="compose" class="mx-4 mb-3 flex items-start gap-3 rounded-2xl bg-paper/65 p-3 sm:mx-7 sm:p-4">
+                    <span id="composer-avatar" class="avatar" aria-hidden="true"></span>
+                    <div class="min-w-0 flex-1">
+                        <label class="sr-only" for="post-text">New post</label>
+                        <textarea id="post-text" class="feed-input min-h-16 text-base" name="text" rows="2" placeholder="What’s on your mind?" required aria-describedby="post-limit"></textarea>
+                        <div class="mt-2 flex items-center justify-end gap-3">
+                            <span id="post-limit" class="composer-counter">0 / 280</span>
+                            <button type="submit" class="action rounded-full" disabled>Post</button>
+                        </div>
+                        <p id="post-feedback" role="status" class="mt-2 text-sm text-danger empty:hidden"></p>
+                    </div>
+                </form>
+                <p id="feed-status" role="status" class="px-4 py-5 text-sm text-muted empty:hidden sm:px-7">Loading feed…</p>
+                <section id="feed" aria-label="Posts"></section>
+                <div class="px-4 py-5 sm:px-7" id="feed-pagination" hidden>
+                    <button id="more-posts" type="button" class="feed-text-action">Load more posts</button>
+                </div>
+            </div>
+        </main>
+    </div>
 </body>
 </html>

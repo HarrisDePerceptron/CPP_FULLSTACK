@@ -130,6 +130,122 @@ TEST_CASE("The feed hides deleted content and a new like restores a deleted like
     });
 }
 
+TEST_CASE("Search ranks literal active post and username matches independently", "[social]") {
+    onDatabaseLoop([]() -> drogon::Task<> {
+        auto database = co_await openSqliteDatabase(":memory:");
+        UserService users(co_await UserDao::init(database));
+        auto posts = co_await SocialPostDao::init(database);
+        auto comments = co_await SocialCommentDao::init(database);
+        auto likes = co_await SocialLikeDao::init(database);
+        auto& accounts = users.dao();
+        const auto exactUser = co_await accounts.create({{"A_%", "hash"}});
+        for (int i = 0; i < 6; ++i) {
+            co_await accounts.create({{"a_%" + std::to_string(i), "hash"}});
+        }
+        const auto deletedUser = co_await accounts.create({{"a_%deleted", "hash"}});
+        REQUIRE(co_await accounts.softDeleteById(deletedUser));
+        const auto author = co_await accounts.create({{"author", "hash"}});
+        const auto exactPost = co_await posts.create({{author, "A_%"}});
+        const auto prefixPost = co_await posts.create({{author, "a_% prefix"}});
+        const auto deletedPost = co_await posts.create({{author, "a_%"}});
+        REQUIRE(co_await posts.softDeleteById(deletedPost));
+        const auto unrelated = co_await posts.create({{author, "unrelated"}});
+        co_await comments.create({{unrelated, author, "a_%"}});
+
+        SocialService social(std::move(posts), std::move(comments), std::move(likes));
+        const auto initial = co_await social.search(" a_% ", users);
+        REQUIRE(initial.posts.size() == 2);
+        REQUIRE(initial.users.size() == 5);
+        CHECK(initial.users.front().id == exactUser);
+        CHECK(initial.users[1].username == "a_%0");
+        CHECK(initial.posts[0].id == exactPost);
+        CHECK(initial.posts[1].id == prefixPost);
+        CHECK_FALSE(co_await social.view(author, deletedPost));
+        CHECK_FALSE(co_await social.userPosts(author, deletedUser, 1, users));
+        const auto userPosts = co_await social.userPosts(author, exactUser, 1, users);
+        REQUIRE(userPosts);
+        CHECK(userPosts->empty());
+        for (int i = 0; i < 6; ++i) {
+            co_await social.post(author, "author", "suffix a_% " + std::to_string(i));
+        }
+        const auto capped = co_await social.search("a_%", users);
+        REQUIRE(capped.posts.size() == 5);
+        CHECK(capped.posts[0].id == exactPost);
+        CHECK(capped.posts[1].id == prefixPost);
+        CHECK(capped.posts[2].text == "suffix a_% 5");
+        CHECK((co_await social.search("  ", users)).posts.empty());
+    });
+}
+
+TEST_CASE("Feed previews the newest visible reply with ID as a timestamp tie breaker", "[social]") {
+    onDatabaseLoop([]() -> drogon::Task<> {
+        auto database = co_await openSqliteDatabase(":memory:");
+        const auto users = co_await UserDao::init(database);
+        const auto posts = co_await SocialPostDao::init(database);
+        const auto comments = co_await SocialCommentDao::init(database);
+        co_await SocialLikeDao::init(database);
+        const auto author = co_await users.create({{"author", "hash"}});
+        const auto post = co_await posts.create({{author, "parent"}});
+        const auto empty = co_await posts.create({{author, "empty"}});
+        CHECK_FALSE((co_await posts.view(author, empty))->latest_comment);
+        co_await comments.create({{post, author, "first"}});
+        const auto second = co_await comments.create({{post, author, "second"}});
+        const auto hidden = co_await comments.create({{post, author, "hidden"}});
+        REQUIRE(co_await comments.softDeleteById(hidden));
+        co_await comments.executeSql("UPDATE social_comments SET created_at = '2026-11-25T01:00:00.000Z'");
+        const auto view = co_await posts.view(author, post);
+        REQUIRE(view);
+        REQUIRE(view->latest_comment);
+        CHECK(view->latest_comment->id == second);
+        CHECK(view->comment_count == 2);
+    });
+}
+
+TEST_CASE("Older comment batches skip deleted rows and stay stable as replies arrive", "[social]") {
+    onDatabaseLoop([]() -> drogon::Task<> {
+        auto fixture = co_await SocialFixture::create();
+        const auto author = co_await fixture.account("alice");
+        const auto post = co_await fixture.social.post(author, "alice", "Parent");
+        const auto stamp = "2026-11-25T01:00:00.000Z";
+        const auto empty = co_await fixture.social.olderComments(post.id, {stamp, 1});
+        REQUIRE(empty);
+        CHECK(empty->empty());
+
+        std::vector<std::int64_t> ids;
+        for (int i = 0; i < 13; ++i) {
+            const auto reply = co_await fixture.social.comment(post.id, author, "alice", "Comment");
+            REQUIRE(reply);
+            if (i == 0) {
+                const auto noOlder = co_await fixture.social.olderComments(post.id, {reply->created_at, reply->id});
+                REQUIRE(noOlder);
+                CHECK(noOlder->empty());
+            }
+            ids.push_back(reply->id);
+        }
+        const auto& dao = fixture.users.dao();
+        co_await dao.executeSql("UPDATE social_comments SET created_at = ? WHERE post_id = ?", stamp, post.id);
+        co_await dao.executeSql("UPDATE social_comments SET deleted_at = ? WHERE id = ?", stamp, ids[9]);
+        const auto first = co_await fixture.social.olderComments(post.id, {stamp, ids.back()});
+        REQUIRE(first);
+        REQUIRE(first->size() == 6);
+        CHECK((*first)[0].id == ids[11]);
+        CHECK((*first)[1].id == ids[10]);
+        CHECK((*first)[2].id == ids[8]);
+        CHECK((*first)[4].id == ids[6]);
+
+        REQUIRE(co_await fixture.social.comment(post.id, author, "alice", "New reply"));
+        const auto second = co_await fixture.social.olderComments(post.id, {stamp, (*first)[4].id});
+        REQUIRE(second);
+        REQUIRE(second->size() == 6);
+        CHECK((*second)[0].id == ids[5]);
+        CHECK((*second)[4].id == ids[1]);
+        const auto tail = co_await fixture.social.olderComments(post.id, {stamp, (*second)[4].id});
+        REQUIRE(tail);
+        REQUIRE(tail->size() == 1);
+        CHECK(tail->front().id == ids.front());
+    });
+}
+
 TEST_CASE("Feed pages are ordered newest first with one lookahead row", "[social]") {
     onDatabaseLoop([]() -> drogon::Task<> {
         auto fixture = co_await SocialFixture::create();

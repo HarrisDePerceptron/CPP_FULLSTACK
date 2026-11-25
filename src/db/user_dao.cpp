@@ -15,6 +15,19 @@ drogon::Task<std::optional<UserRecord>> UserDao::findByUsername(std::string user
     co_return std::move(rows.front());
 }
 
+drogon::Task<std::vector<UserMatch>> UserDao::search(std::string query) const {
+    const auto rows = co_await executeSql(
+        "SELECT id, username FROM users WHERE deleted_at IS NULL AND instr(lower(username), lower(?1)) > 0 "
+        "ORDER BY CASE WHEN lower(username) = lower(?1) THEN 0 "
+        "WHEN instr(lower(username), lower(?1)) = 1 THEN 1 ELSE 2 END, lower(username), id LIMIT 5",
+        std::move(query));
+    std::vector<UserMatch> result;
+    for (const auto& row : rows) {
+        result.push_back({row[0].as<std::int64_t>(), row[1].as<std::string>()});
+    }
+    co_return result;
+}
+
 drogon::Task<bool> UserDao::insertAccount(std::string username, std::string passwordHash) const {
     const auto result = co_await executeSql(
         "INSERT INTO users (username, password_hash) VALUES (?, ?) "

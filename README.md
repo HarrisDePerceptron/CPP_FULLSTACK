@@ -1,6 +1,6 @@
 # App Template
 
-A C++26 web application starter built with Drogon and Xmake. The demo includes a server-rendered page, cookie-based sign-in, SQLite user storage, file uploads and downloads, and an upstream JSON endpoint.
+A C++26 web application starter built with Drogon and Xmake. The home page is a social feed with cookie-based sign-in and SQLite storage. The server also exposes file upload, download, and upstream content endpoints.
 
 ## Getting started
 
@@ -356,7 +356,7 @@ formatting and method restrictions in the shared dispatcher.
 
 ## Social feed demo
 
-Open `/social` and sign in with the local demo account, or create an account
+Open `/` and sign in with the local demo account, or create an account
 on the sign-in page. Publish a post, then sign out and create or sign in to a
 second account. Open the post's comments, add a comment, and like the post.
 Sign back in as the first user to see the second user's comment and the shared

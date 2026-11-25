@@ -34,6 +34,11 @@ struct CommentView {
     std::string created_at;
 };
 
+struct CommentCursor {
+    std::string created_at;
+    std::int64_t id;
+};
+
 struct LikeView {
     std::int64_t like_count;
     bool liked;
@@ -47,14 +52,25 @@ struct PostView {
     std::int64_t comment_count;
     std::int64_t like_count;
     bool liked;
+    std::optional<CommentView> latest_comment;
+};
+
+struct PostMatch {
+    std::int64_t id;
+    std::string author;
+    std::string text;
 };
 
 class SocialPostDao final : public BaseDao<SocialPostDao, SocialPost> {
 public:
     static drogon::Task<SocialPostDao> init(DatabaseBackendPtr database);
     drogon::Task<std::vector<PostView>> feed(std::int64_t user, std::int64_t limit,
-                                            std::int64_t offset) const;
+                                            std::int64_t offset, std::optional<std::int64_t> author = {}) const;
+    drogon::Task<std::optional<PostView>> view(std::int64_t user, std::int64_t post) const;
+    drogon::Task<std::vector<PostMatch>> search(std::string query) const;
 private:
+    drogon::Task<std::vector<PostView>> readViews(std::int64_t user, std::int64_t limit,
+        std::int64_t offset, std::string filter, std::int64_t key) const;
     using BaseDao::BaseDao;
 };
 
@@ -63,6 +79,8 @@ public:
     static drogon::Task<SocialCommentDao> init(DatabaseBackendPtr database);
     drogon::Task<std::vector<CommentView>> thread(std::int64_t post, std::int64_t limit,
                                                  std::int64_t offset, const UserDao& users) const;
+    drogon::Task<std::vector<CommentView>> older(
+        std::int64_t post, CommentCursor before, std::int64_t limit) const;
 private:
     using BaseDao::BaseDao;
 };

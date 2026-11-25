@@ -48,10 +48,11 @@ std::string readText(const HttpRequest& request) {
 }
 
 template <typename Item>
-HttpResponsePtr pageResponse(const HttpRequest& request, std::vector<Item> items, std::int64_t page) {
-    const bool hasMore = items.size() > SocialService::pageSize;
+HttpResponsePtr pageResponse(const HttpRequest& request, std::vector<Item> items, std::int64_t page,
+                             std::int64_t perPage = SocialService::pageSize) {
+    const bool hasMore = items.size() > static_cast<std::size_t>(perPage);
     if (hasMore) items.pop_back();
-    return apiOk(request, std::move(items), ApiPagination{page, SocialService::pageSize, hasMore});
+    return apiOk(request, std::move(items), ApiPagination{page, perPage, hasMore});
 }
 
 HttpResponsePtr missingPost(const HttpRequest& request) {
@@ -71,16 +72,42 @@ HttpResponsePtr noStore(HttpResponsePtr response) {
 
 void registerSocialRoutes(const std::shared_ptr<Services>& services, const std::string& jwt) {
     auto& server = app();
-    server.registerHandler("/social", [services](HttpRequestPtr request) -> Task<HttpResponsePtr> {
+    server.registerHandler("/", [services](HttpRequestPtr request) -> Task<HttpResponsePtr> {
         const auto username = services->tokens.verify(request->getCookie(sessionCookieName));
         if (!username || !co_await services->users.findId(*username)) {
             co_return noStore(HttpResponse::newRedirectionResponse("/social/login"));
         }
         co_return noStore(HttpResponse::newHttpViewResponse("AppViews::social"));
     }, {Get});
+    server.registerHandler("/social", [](HttpRequestPtr) -> Task<HttpResponsePtr> {
+        co_return noStore(HttpResponse::newRedirectionResponse("/"));
+    }, {Get});
     server.registerHandler("/social/login", [](HttpRequestPtr) -> Task<HttpResponsePtr> {
         co_return noStore(HttpResponse::newHttpViewResponse("AppViews::social_login"));
     }, {Get});
+    server.registerHandler("/api/search", [services](HttpRequestPtr request) -> Task<HttpResponsePtr> {
+        const auto viewer = co_await services->users.findId(request->attributes()->get<std::string>(subjectAttribute));
+        if (!viewer) co_return unauthorized(*request);
+        auto matches = co_await services->social.search(request->getParameter("q"), services->users);
+        co_return noStore(apiOk(*request, std::move(matches)));
+    }, {Get, jwt});
+    server.registerHandler("/api/posts/{1}",
+        [services](HttpRequestPtr request, std::string id) -> Task<HttpResponsePtr> {
+            const auto viewer = co_await services->users.findId(request->attributes()->get<std::string>(subjectAttribute));
+            if (!viewer) co_return unauthorized(*request);
+            auto post = co_await services->social.view(*viewer, positiveInteger(id));
+            if (!post) co_return missingPost(*request);
+            co_return noStore(apiOk(*request, std::move(*post)));
+        }, {Get, jwt});
+    server.registerHandler("/api/users/{1}/posts",
+        [services](HttpRequestPtr request, std::string id) -> Task<HttpResponsePtr> {
+            const auto viewer = co_await services->users.findId(request->attributes()->get<std::string>(subjectAttribute));
+            if (!viewer) co_return unauthorized(*request);
+            const auto page = pageNumber(*request);
+            auto profile = co_await services->social.userPosts(*viewer, positiveInteger(id), page, services->users);
+            if (!profile) co_return apiError(*request, k404NotFound, "NOT_FOUND", "That person could not be found.");
+            co_return noStore(pageResponse(*request, std::move(*profile), page));
+        }, {Get, jwt});
     server.registerHandler("/api/posts", [services](HttpRequestPtr request) -> Task<HttpResponsePtr> {
         const auto username = request->attributes()->get<std::string>(subjectAttribute);
         const auto user = co_await services->users.findId(username);
@@ -103,6 +130,17 @@ void registerSocialRoutes(const std::shared_ptr<Services>& services, const std::
                 auto comment = co_await services->social.comment(post, *user, username, readText(*request));
                 if (!comment) co_return missingPost(*request);
                 co_return noStore(apiOk(*request, std::move(*comment), k201Created));
+            }
+            const auto& parameters = request->getParameters();
+            if (parameters.contains("before_id") || parameters.contains("before_time")) {
+                const auto& time = request->getParameter("before_time");
+                const auto& id = request->getParameter("before_id");
+                if (time.empty() || id.empty() || parameters.contains("page")) {
+                    throw RequestValidationError("Send before_time and before_id together without page.");
+                }
+                auto comments = co_await services->social.olderComments(post, CommentCursor{time, positiveInteger(id)});
+                if (!comments) co_return missingPost(*request);
+                co_return noStore(pageResponse(*request, std::move(*comments), 1, SocialService::commentBatchSize));
             }
             const auto page = pageNumber(*request);
             auto comments = co_await services->social.thread(post, page, services->users);

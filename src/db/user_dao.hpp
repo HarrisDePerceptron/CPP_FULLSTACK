@@ -22,12 +22,18 @@ struct UserFields {
 
 using UserRecord = DaoRecord<UserFields>;
 
+struct UserMatch {
+    std::int64_t id;
+    std::string username;
+};
+
 class UserDao final : public BaseDao<UserDao, UserRecord> {
 public:
   static drogon::Task<UserDao> init(DatabaseBackendPtr database);
 
   drogon::Task<std::optional<UserRecord>>
   findByUsername(std::string username) const;
+  drogon::Task<std::vector<UserMatch>> search(std::string query) const;
   drogon::Task<bool> hasDemo() const;
   drogon::Task<bool> insertAccount(std::string username, std::string passwordHash) const;
   drogon::Task<bool> insertDemo(std::string username,
