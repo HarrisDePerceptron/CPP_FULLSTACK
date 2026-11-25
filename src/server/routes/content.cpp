@@ -11,24 +11,24 @@ namespace {
 
 using namespace drogon;
 
-Task<HttpResponsePtr> content(std::shared_ptr<Services> services) {
+Task<HttpResponsePtr> content(std::shared_ptr<Services> services, HttpRequestPtr request) {
     const auto result = co_await services->workers.submit([] { return fetchContent(); });
-    if (result) co_return jsonResponse(*result);
+    if (result) co_return apiOk(*request, *result);
 
     if (result.error() == ContentError::timeout) {
         services->log.write(LogLevel::warn, "Content provider timed out");
-        co_return jsonError(k504GatewayTimeout, "The content provider timed out.");
+        co_return apiError(*request, k504GatewayTimeout, "GATEWAY_TIMEOUT", "The content provider timed out.");
     }
     services->log.write(LogLevel::warn, "Content provider returned an unusable response");
-    co_return jsonError(k502BadGateway, "Could not fetch content from the provider.");
+    co_return apiError(*request, k502BadGateway, "BAD_GATEWAY", "Could not fetch content from the provider.");
 }
 
 }
 
 void registerContentRoutes(const std::shared_ptr<Services>& services) {
     auto& server = app();
-    server.registerHandler("/api/content", [services](HttpRequestPtr) {
-        return content(services);
+    server.registerHandler("/api/content", [services](HttpRequestPtr request) {
+        return content(services, std::move(request));
     }, {Get});
 }
 

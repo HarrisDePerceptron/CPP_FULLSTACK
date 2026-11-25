@@ -236,7 +236,7 @@ Edit [config.json](config.json) to change the listener or demo credentials. The 
 ## Development rules
 
 - Keep `.hpp` files beside their `.cpp` implementations. Use four spaces and put opening braces on the declaration line.
-- Keep route handlers small. Delegate persistence and outbound calls, use `co_await` for asynchronous work, `jsonResponse` for typed JSON replies, and `std::println` for console output.
+- Keep route handlers small. Delegate persistence and outbound calls, use `co_await` for asynchronous work, `apiOk` and `apiError` for typed JSON replies, and `std::println` for console output.
 - After editing a view or Tailwind source, run `npm ci` and `npm run build:css` with Node.js installed. Include the regenerated `public/demo.css` in the change.
 - Keep `.env`, local databases, and runtime uploads out of commits. See [AGENTS.md](AGENTS.md) for the full repository guidelines.
 
@@ -265,21 +265,38 @@ TodoRouter::mount(server, "/api/todos", router);
 | Request | Behavior |
 | --- | --- |
 | `POST /api/todos` with `{"title":"Buy milk"}` | Creates a todo and returns it with `201`. |
-| `GET /api/todos?done=false&limit=10` | Lists up to 10 open todos. |
+| `GET /api/todos?done=false&per_page=10` | Lists up to 10 open todos. |
 | `GET /api/todos/1` | Fetches todo `1`. |
 | `PATCH /api/todos/1` with `{"done":true}` | Marks it complete and preserves the title. |
-| `DELETE /api/todos/1` | Deletes the todo and returns an empty result. |
+| `DELETE /api/todos/1` | Deletes the todo and returns an empty data array. |
 
-A successful PATCH returns a single item in the result array.
+A successful PATCH returns a single item in the data array.
 
 ```json
-{"result":[{"id":1,"title":"Buy milk","done":true}],"error":"","message":""}
+{
+  "success": true,
+  "data": [{"id": 1, "title": "Buy milk", "done": true}],
+  "meta": {
+    "timestamp": "2026-11-25T00:13:00Z",
+    "request_id": "req_98abc",
+    "pagination": {"page": 1, "per_page": 1, "has_more": false}
+  }
+}
 ```
 
 Pass `CrudMethods{.remove = false}` as the router's second constructor argument
 to disable deletion. A disabled method returns `405` with an `Allow` header.
 Pass middleware names as the fourth argument to `mount` to protect the routes.
-Errors use the same JSON shape with an empty result and an error string.
+List requests use one-based `page` and `per_page` (default 20, maximum 100).
+`has_more` comes from fetching one extra matching row. Responses have no total
+count. Single-item and empty DELETE responses use page and page size 1.
+
+Use `apiOk(*request, item)` for success and
+`apiError(*request, status, code, message)` for explicit errors. Errors include
+`success: false`, a structured `error`, and request metadata. Throw
+`RequestValidationError(message, fields)` to automatically return
+`400 VALIDATION_FAILED`. The optional field map stores a list of messages per
+field. The response's `X-Request-ID` header matches `meta.request_id`.
 
 ### Define and customize the resource
 

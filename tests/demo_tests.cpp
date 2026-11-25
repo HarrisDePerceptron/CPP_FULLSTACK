@@ -1045,11 +1045,19 @@ TEST_CASE("Glaze JWT serialization and verification preserve signed claims", "[j
     CHECK_FALSE(tokens.verify(tokens.issue("")));
 }
 
-TEST_CASE("jsonResponse sets the status, content type and JSON body", "[http]") {
-    const auto response = jsonError(drogon::k400BadRequest, "Invalid \"input\"");
+TEST_CASE("API exception handling preserves field validation and hides internal failures", "[http]") {
+    const auto request = drogon::HttpRequest::newHttpRequest();
+    const auto response = apiException(*request, RequestValidationError(
+        "The given data was invalid.", {{"email", {"Invalid email."}}}));
     CHECK(response->statusCode() == drogon::k400BadRequest);
     CHECK(response->getContentType() == drogon::CT_APPLICATION_JSON);
-    CHECK(response->body() == R"({"error":"Invalid \"input\""})");
+    CHECK(response->body().find(R"("email":["Invalid email."])") != std::string_view::npos);
+    CHECK(response->body().find("VALIDATION_FAILED") != std::string_view::npos);
+
+    const auto failure = apiException(*request, std::runtime_error("private failure"));
+    CHECK(failure->statusCode() == drogon::k500InternalServerError);
+    CHECK(failure->body().find("private failure") == std::string_view::npos);
+    CHECK(failure->getHeader("X-Request-ID") == response->getHeader("X-Request-ID"));
 }
 
 TEST_CASE("Uploads are published under generated names with validated types", "[upload]") {

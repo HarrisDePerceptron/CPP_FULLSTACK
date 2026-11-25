@@ -30,6 +30,7 @@ void configureLogging(const Config& config, const Logger& log) {
     app().setLogLevel(levels[static_cast<int>(config.logLevel)]);
     app().registerPreRoutingAdvice([](const HttpRequestPtr& request) {
         request->attributes()->insert(startAttribute, std::chrono::steady_clock::now());
+        apiRequestId(*request);
     });
     app().registerPreSendingAdvice([log](const HttpRequestPtr& request,
                                         const HttpResponsePtr& response) {
@@ -40,17 +41,17 @@ void configureLogging(const Config& config, const Logger& log) {
             Clock::now() - start);
         auto route = request->matchedPathPattern();
         if (route.empty()) route = request->path().starts_with("/public/") ? "/public/*" : "(unmatched)";
-        log.write(LogLevel::info, "{} {} {} {}ms", request->methodString(), route,
+        log.write(LogLevel::info, "{} {} {} {} {}ms", apiRequestId(*request), request->methodString(), route,
                   static_cast<int>(response->statusCode()), elapsed.count());
     });
     app().setExceptionHandler([log](const std::exception& error, const HttpRequestPtr& request,
                                    std::function<void(const HttpResponsePtr&)>&& reply) {
         if (dynamic_cast<const WorkersBusy*>(&error)) {
-            reply(jsonError(k503ServiceUnavailable, "Server is busy. Try again shortly."));
+            reply(apiError(*request, k503ServiceUnavailable, "SERVICE_UNAVAILABLE", "Server is busy. Try again shortly."));
             return;
         }
         log.write(LogLevel::error, "Request failed in {}", request->matchedPathPattern());
-        reply(jsonError(k500InternalServerError, "Internal server error."));
+        reply(apiException(*request, error));
     });
 }
 

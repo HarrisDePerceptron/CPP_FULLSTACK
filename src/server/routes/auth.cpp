@@ -35,23 +35,23 @@ Task<HttpResponsePtr> login(std::shared_ptr<Services> services, HttpRequestPtr r
     Credentials credentials;
     const auto body = request->body();
     if (request->contentType() != CT_APPLICATION_JSON || body.size() > 4096) {
-        co_return jsonError(k400BadRequest, "Send a JSON username and password.");
+        co_return apiError(*request, k400BadRequest, "VALIDATION_FAILED", "Send a JSON username and password.");
     }
     const std::string json(body);
     if (glz::validate_json(json) ||
         glz::read<glz::opts{.error_on_missing_keys = true}>(credentials, json) ||
         credentials.username.empty() || credentials.username.size() > 128 ||
         credentials.password.empty() || credentials.password.size() > 1024) {
-        co_return jsonError(k400BadRequest, "Send a JSON username and password.");
+        co_return apiError(*request, k400BadRequest, "VALIDATION_FAILED", "Send a JSON username and password.");
     }
 
     if (!co_await services->users.authenticate(credentials.username, credentials.password, services->workers)) {
-        co_return jsonError(k401Unauthorized, "Invalid username or password.");
+        co_return apiError(*request, k401Unauthorized, "UNAUTHORIZED", "Invalid username or password.");
     }
 
     const auto token = services->tokens.issue(credentials.username);
     const auto lifetime = services->tokens.lifetime().count();
-    auto response = jsonResponse(LoginResult{token, "Bearer", lifetime});
+    auto response = apiOk(*request, LoginResult{token, "Bearer", lifetime});
     response->addCookie(sessionCookie(request, token, static_cast<int>(lifetime)));
     response->addHeader("Cache-Control", "no-store");
     co_return response;
@@ -71,7 +71,7 @@ void registerAuthRoutes(const std::shared_ptr<Services>& services, const std::st
         co_return response;
     }, {Post});
     server.registerHandler("/api/me", [](HttpRequestPtr request) -> Task<HttpResponsePtr> {
-        auto response = jsonResponse(Identity{request->attributes()->get<std::string>(
+        auto response = apiOk(*request, Identity{request->attributes()->get<std::string>(
             subjectAttribute)});
         response->addHeader("Cache-Control", "no-store");
         co_return response;

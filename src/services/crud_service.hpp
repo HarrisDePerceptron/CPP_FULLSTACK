@@ -3,12 +3,11 @@
 #include "db/database_backend.hpp"
 
 #include <stdexcept>
+#include "utils/request_validation.hpp"
 
 namespace APP_NAMESPACE {
 
-class CrudValidationError : public std::runtime_error {
-    using std::runtime_error::runtime_error;
-};
+using CrudValidationError = RequestValidationError;
 
 struct CrudPage {
     std::int64_t limit = 100;

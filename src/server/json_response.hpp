@@ -1,36 +1,121 @@
 #pragma once
 
 #include "app_namespace.hpp"
+#include "utils/random.hpp"
+#include "utils/request_validation.hpp"
 
+#include <drogon/HttpRequest.h>
 #include <drogon/HttpResponse.h>
+#include <drogon/orm/Exception.h>
 #include <glaze/glaze.hpp>
 
-#include <string_view>
-#include <utility>
+#include <ctime>
 
 namespace APP_NAMESPACE {
 
-template<class Payload>
-drogon::HttpResponsePtr jsonResponse(const Payload& payload,
-                                     drogon::HttpStatusCode status = drogon::k200OK) {
+struct ApiPagination {
+    std::int64_t page = 1;
+    std::int64_t per_page = 1;
+    bool has_more = false;
+};
+
+struct ApiMeta {
+    std::string timestamp;
+    std::string request_id;
+    std::optional<ApiPagination> pagination;
+};
+
+struct ApiError {
+    std::string code;
+    std::string message;
+    std::optional<ApiErrorFields> fields;
+};
+
+template <typename T>
+struct ApiResponse {
+    bool success;
+    std::optional<std::vector<T>> data;
+    std::optional<ApiError> error;
+    ApiMeta meta;
+};
+
+inline std::string apiRequestId(const drogon::HttpRequest& request) {
+    constexpr auto key = "app.requestId";
+    const auto attributes = request.attributes();
+    auto id = attributes->get<std::string>(key);
+    if (id.empty()) {
+        id = "req_" + randomHex<16>();
+        attributes->insert(key, id);
+    }
+    return id;
+}
+
+inline ApiMeta apiMeta(const drogon::HttpRequest& request, std::optional<ApiPagination> pagination) {
+    const auto now = std::time(nullptr);
+    std::tm utc{};
+    char timestamp[21]{};
+    if (gmtime_r(&now, &utc)) std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", &utc);
+    return {timestamp, apiRequestId(request), pagination};
+}
+
+template <typename T>
+drogon::HttpResponsePtr serializeApi(const ApiResponse<T>& payload, drogon::HttpStatusCode status) {
     auto response = drogon::HttpResponse::newHttpResponse();
     response->setContentTypeCode(drogon::CT_APPLICATION_JSON);
+    response->addHeader("X-Request-ID", payload.meta.request_id);
     if (auto json = glz::write_json(payload)) {
         response->setStatusCode(status);
         response->setBody(std::move(*json));
     } else {
         response->setStatusCode(drogon::k500InternalServerError);
-        response->setBody(R"({"error":"Could not serialize response."})");
+        auto meta = payload.meta;
+        meta.pagination.reset();
+        auto fallback = glz::write_json(ApiResponse<bool>{
+            false, {}, ApiError{"INTERNAL_ERROR", "Internal server error.", {}}, std::move(meta)});
+        response->setBody(std::move(fallback).value());
     }
     return response;
 }
 
-struct JsonError {
-    std::string_view error;
-};
+template <typename T>
+drogon::HttpResponsePtr apiOk(const drogon::HttpRequest& request, std::vector<T> items,
+                            ApiPagination pagination, drogon::HttpStatusCode status = drogon::k200OK) {
+    return serializeApi(ApiResponse<T>{true, std::move(items), {}, apiMeta(request, pagination)}, status);
+}
 
-inline drogon::HttpResponsePtr jsonError(drogon::HttpStatusCode status, std::string_view message) {
-    return jsonResponse(JsonError{message}, status);
+template <typename T>
+drogon::HttpResponsePtr apiOk(const drogon::HttpRequest& request, T item,
+                            drogon::HttpStatusCode status = drogon::k200OK) {
+    std::vector<T> items;
+    items.push_back(std::move(item));
+    return apiOk(request, std::move(items), {}, status);
+}
+
+inline drogon::HttpResponsePtr apiOk(const drogon::HttpRequest& request) {
+    return apiOk(request, std::vector<int>{}, ApiPagination{});
+}
+
+inline drogon::HttpResponsePtr apiError(const drogon::HttpRequest& request, drogon::HttpStatusCode status,
+                                       std::string code, std::string message, ApiErrorFields fields = {}) {
+    ApiError error{std::move(code), std::move(message), {}};
+    if (!fields.empty()) error.fields.emplace(std::move(fields));
+    return serializeApi(ApiResponse<bool>{false, {}, std::move(error), apiMeta(request, {})}, status);
+}
+
+inline drogon::HttpResponsePtr apiException(const drogon::HttpRequest& request, const std::exception& error) {
+    using namespace drogon;
+    if (const auto* validation = dynamic_cast<const RequestValidationError*>(&error)) {
+        return apiError(request, k400BadRequest, "VALIDATION_FAILED", validation->what(), validation->fields);
+    }
+    if (const auto* sql = dynamic_cast<const orm::SqlError*>(&error)) {
+        constexpr int sqliteConstraint = 19;
+        if ((sql->errcode() & 0xff) == sqliteConstraint ||
+            (sql->extendedErrcode() & 0xff) == sqliteConstraint ||
+            sql->sqlState().starts_with("23")) {
+            return apiError(request, k409Conflict, "CONFLICT", "Resource conflicts with a database constraint.");
+        }
+    }
+    return apiError(request, k500InternalServerError, "INTERNAL_ERROR", "Internal server error.");
 }
 
 }

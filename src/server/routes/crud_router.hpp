@@ -8,6 +8,7 @@
 
 #include <charconv>
 #include <concepts>
+#include <limits>
 
 namespace APP_NAMESPACE {
 
@@ -62,16 +63,10 @@ protected:
 
     const Service& service() const { return *service_; }
 
-    virtual drogon::Task<Items> list(const Request& request) const {
-        CrudPage page;
+    virtual drogon::Task<Items> list(const Request& request, CrudPage page) const {
         typename Service::Filters filters;
         for (const auto& [name, value] : request.parameters()) {
-            if (name == "limit") page.limit = parseCrudInteger<std::int64_t>(value);
-            else if (name == "offset") page.offset = parseCrudInteger<std::int64_t>(value);
-            else Policy::addFilter(filters, name, value);
-        }
-        if (page.limit < 1 || page.limit > 100 || page.offset < 0) {
-            throw CrudValidationError("Invalid pagination.");
+            if (name != "page" && name != "per_page") Policy::addFilter(filters, name, value);
         }
         return service_->list(page, std::move(filters));
     }
@@ -93,26 +88,20 @@ protected:
     }
 
 private:
-    struct Envelope {
-        Items result;
-        std::string error;
-        std::string message;
-    };
-
-    static drogon::HttpResponsePtr reply(drogon::HttpStatusCode status, Items items = {},
-                                         std::string error = {}) {
-        auto response = jsonResponse(Envelope{std::move(items), std::move(error), ""}, status);
-        if (status != drogon::k500InternalServerError &&
-            response->statusCode() == drogon::k500InternalServerError) {
-            return reply(drogon::k500InternalServerError, {}, "Internal server error.");
+    static ApiPagination pagination(const Request& request) {
+        ApiPagination page{1, 20, false};
+        const auto& params = request.parameters();
+        if (const auto it = params.find("page"); it != params.end()) {
+            page.page = parseCrudInteger<std::int64_t>(it->second);
         }
-        return response;
-    }
-
-    static drogon::HttpResponsePtr single(drogon::HttpStatusCode status, Response item) {
-        Items items;
-        items.push_back(std::move(item));
-        return reply(status, std::move(items));
+        if (const auto it = params.find("per_page"); it != params.end()) {
+            page.per_page = parseCrudInteger<std::int64_t>(it->second);
+        }
+        if (page.page < 1 || page.per_page < 1 || page.per_page > 100 ||
+            page.page - 1 > std::numeric_limits<std::int64_t>::max() / page.per_page) {
+            throw CrudValidationError("Invalid pagination.");
+        }
+        return page;
     }
 
     static const Json::Value& objectBody(const Request& request) {
@@ -134,7 +123,7 @@ private:
         }
     }
 
-    drogon::HttpResponsePtr methodNotAllowed(bool item) const {
+    drogon::HttpResponsePtr methodNotAllowed(const Request& request, bool item) const {
         using namespace drogon;
         std::string allow;
         const auto append = [&](bool enabled, std::string_view method) {
@@ -149,7 +138,7 @@ private:
         } else {
             append(methods_.create, "POST");
         }
-        auto response = reply(k405MethodNotAllowed, {}, "Method not allowed.");
+        auto response = apiError(request, k405MethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed.");
         response->addHeader("Allow", std::move(allow));
         return response;
     }
@@ -160,34 +149,32 @@ private:
         try {
             const auto method = request->method();
             if (!id) {
-                if (method == Get && methods_.list) co_return reply(k200OK, co_await list(*request));
-                if (method == Post && methods_.create) co_return single(k201Created, co_await create(*request));
-                co_return methodNotAllowed(false);
+                if (method == Get && methods_.list) {
+                    auto page = pagination(*request);
+                    auto items = co_await list(*request, {page.per_page + 1, (page.page - 1) * page.per_page});
+                    const auto limit = static_cast<std::size_t>(page.per_page);
+                    page.has_more = items.size() > limit;
+                    if (page.has_more) items.erase(items.begin() + limit, items.end());
+                    co_return apiOk(*request, std::move(items), page);
+                }
+                if (method == Post && methods_.create) co_return apiOk(*request, co_await create(*request), k201Created);
+                co_return methodNotAllowed(*request, false);
             }
             if (method == Get && methods_.get) {
                 auto item = co_await get(*request, parseId(*id));
-                if (item) co_return single(k200OK, std::move(*item));
+                if (item) co_return apiOk(*request, std::move(*item));
             } else if (method == Patch && methods_.patch) {
                 auto item = co_await patch(*request, parseId(*id));
-                if (item) co_return single(k200OK, std::move(*item));
+                if (item) co_return apiOk(*request, std::move(*item));
             } else if (method == Delete && methods_.remove) {
-                if (co_await remove(*request, parseId(*id))) co_return reply(k200OK);
+                if (co_await remove(*request, parseId(*id))) co_return apiOk(*request);
             } else {
-                co_return methodNotAllowed(true);
+                co_return methodNotAllowed(*request, true);
             }
-            co_return reply(k404NotFound, {}, "Resource not found.");
-        } catch (const CrudValidationError& error) {
-            co_return reply(k400BadRequest, {}, error.what());
-        } catch (const orm::SqlError& error) {
-            constexpr int sqliteConstraint = 19;
-            if ((error.errcode() & 0xff) == sqliteConstraint ||
-                (error.extendedErrcode() & 0xff) == sqliteConstraint ||
-                error.sqlState().starts_with("23")) {
-                co_return reply(k409Conflict, {}, "Resource conflicts with a database constraint.");
-            }
-        } catch (const std::exception&) {
+            co_return apiError(*request, k404NotFound, "NOT_FOUND", "Resource not found.");
+        } catch (const std::exception& error) {
+            co_return apiException(*request, error);
         }
-        co_return reply(k500InternalServerError, {}, "Internal server error.");
     }
 
     std::shared_ptr<const Service> service_;

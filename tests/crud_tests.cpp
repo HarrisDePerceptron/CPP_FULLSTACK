@@ -131,22 +131,34 @@ unsigned short freePort() {
     return ntohs(address.sin_port);
 }
 
-Json::Value checkReply(const cpr::Response& response, int status) {
+Json::Value checkReply(const cpr::Response& response, int status, ApiPagination pagination = {}) {
     REQUIRE(response.status_code == status);
     Json::Value json;
     Json::Reader reader;
     REQUIRE(reader.parse(response.text, json));
     REQUIRE(json.getMemberNames().size() == 3);
-    REQUIRE(json["result"].isArray());
-    REQUIRE(json["error"].isString());
-    REQUIRE(json["message"].isString());
+    CHECK(json["success"].asBool() == (status < 400));
+    const auto& meta = json["meta"];
+    const auto timestamp = meta["timestamp"].asString();
+    REQUIRE(timestamp.size() == 20);
+    CHECK(timestamp.ends_with("Z"));
+    CHECK(meta["request_id"].asString().starts_with("req_"));
+    CHECK(response.header.at("X-Request-ID") == meta["request_id"].asString());
     if (status >= 400) {
-        CHECK(json["result"].empty());
-        CHECK_FALSE(json["error"].asString().empty());
+        CHECK_FALSE(json.isMember("data"));
+        CHECK_FALSE(meta.isMember("pagination"));
+        CHECK_FALSE(json["error"]["code"].asString().empty());
+        CHECK_FALSE(json["error"]["message"].asString().empty());
     } else {
-        CHECK(json["error"].asString().empty());
+        CHECK_FALSE(json.isMember("error"));
+        REQUIRE(json["data"].isArray());
+        const auto& page = meta["pagination"];
+        REQUIRE(page.getMemberNames().size() == 3);
+        CHECK(page["page"].asInt64() == pagination.page);
+        CHECK(page["per_page"].asInt64() == pagination.per_page);
+        CHECK(page["has_more"].asBool() == pagination.has_more);
     }
-    return json["result"];
+    return json["data"];
 }
 
 class CrudServer {
@@ -237,8 +249,10 @@ TEST_CASE("CRUD routes create, read, filter, update and delete resources", "[cru
     REQUIRE(item.size() == 1);
     CHECK(item[0]["group"].asString() == "one-service-router");
     CHECK_FALSE(item[0].isMember("private_value"));
-    CHECK(checkReply(client.get("/widgets?name=alpha&group=one"), 200).size() == 1);
-    CHECK(checkReply(client.get("/widgets?group=one&limit=1&offset=1"), 200).size() == 1);
+    CHECK(checkReply(client.get("/widgets?name=alpha&group=one"), 200, {1, 20, false}).size() == 1);
+    CHECK(checkReply(client.get("/widgets?group=one&per_page=1&page=2"), 200, {2, 1, false}).size() == 1);
+    CHECK(checkReply(client.get("/widgets?group=one&per_page=1"), 200, {1, 1, true}).size() == 1);
+    CHECK(checkReply(client.get("/widgets?group=one&per_page=1&page=3"), 200, {3, 1, false}).empty());
 
     const auto updated = checkReply(client.patch(path, R"({"name":"gamma"})"), 200);
     REQUIRE(updated.size() == 1);
@@ -255,7 +269,7 @@ TEST_CASE("CRUD routes reject invalid requests and roll back conflicting patches
     checkReply(client.post("/widgets", R"({"name":"beta","group":"one"})"), 201);
 
     checkReply(client.post("/widgets", R"({"name":"alpha","group":"one"})"), 409);
-    checkReply(client.get("/widgets?limit=101"), 400);
+    checkReply(client.get("/widgets?per_page=101"), 400);
     checkReply(client.get("/widgets?private_value=private"), 400);
     checkReply(client.get("/widgets/not-an-id"), 400);
     checkReply(client.patch(path, R"({"name":null})"), 400);
@@ -274,7 +288,7 @@ TEST_CASE("CRUD routes handle empty results, explicit null and disabled methods"
     const CrudClient client("/edges");
     const auto path = createWidget(client);
 
-    CHECK(checkReply(client.get("/widgets?name=alpha&group=two"), 200).empty());
+    CHECK(checkReply(client.get("/widgets?name=alpha&group=two"), 200, {1, 20, false}).empty());
     const auto cleared = checkReply(client.patch(path, R"({"note":null})"), 200);
     REQUIRE(cleared.size() == 1);
     CHECK(cleared[0]["note"].isNull());

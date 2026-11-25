@@ -33,7 +33,7 @@ public:
             co_return co_await std::move(next);
         }
 
-        auto response = jsonError(k401Unauthorized, "A valid session or Bearer token is required.");
+        auto response = apiError(*request, k401Unauthorized, "UNAUTHORIZED", "A valid session or Bearer token is required.");
         response->addHeader("WWW-Authenticate", "Bearer");
         response->addHeader("Cache-Control", "no-store");
         co_return response;

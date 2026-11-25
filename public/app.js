@@ -75,7 +75,7 @@ $("login").addEventListener("submit", (event) => {
         body: JSON.stringify({ username, password }),
     }, false, (status, body) => {
         setSession(username);
-        showResult(status, { username, expires_in: body.expires_in });
+        showResult(status, { username, expires_in: body.data[0].expires_in });
     });
     form.elements.password.value = "";
 });
@@ -92,10 +92,10 @@ uploadForm.addEventListener("submit", (event) => {
         return;
     }
     request("/api/uploads", { method: "POST", body: data }, true, (status, body) => {
-        const publicUrl = /^\/public\/uploads\/[a-f0-9]{32}\.(pdf|png|jpg|gif|webp)$/.test(body.url)
-            ? body.url : undefined;
+        const publicUrl = /^\/public\/uploads\/[a-f0-9]{32}\.(pdf|png|jpg|gif|webp)$/.test(body.data[0].url)
+            ? body.data[0].url : undefined;
         showResult(status, body, publicUrl);
     });
 });
 
-request("/api/me", {}, true, (_status, body) => setSession(body.username), true);
+request("/api/me", {}, true, (_status, body) => setSession(body.data[0].username), true);

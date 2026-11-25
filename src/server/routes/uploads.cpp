@@ -30,16 +30,16 @@ Task<HttpResponsePtr> upload(std::shared_ptr<Services> services, HttpRequestPtr 
     if (!saved) {
         switch (saved.error()) {
             case UploadError::empty:
-                co_return jsonError(k400BadRequest, "Choose one file to upload.");
+                co_return apiError(*request, k400BadRequest, "VALIDATION_FAILED", "Choose one file to upload.");
             case UploadError::tooLarge:
-                co_return jsonError(k413RequestEntityTooLarge, "The file exceeds 10 MiB.");
+                co_return apiError(*request, k413RequestEntityTooLarge, "PAYLOAD_TOO_LARGE", "The file exceeds 10 MiB.");
             case UploadError::unsupported:
-                co_return jsonError(k415UnsupportedMediaType, "Choose a PDF or a supported image.");
+                co_return apiError(*request, k415UnsupportedMediaType, "UNSUPPORTED_MEDIA_TYPE", "Choose a PDF or a supported image.");
         }
     }
 
     const auto url = std::string(uploadPrefix) + *saved;
-    auto response = jsonResponse(UploadResult{url}, k201Created);
+    auto response = apiOk(*request, UploadResult{url}, k201Created);
     response->addHeader("Location", url);
     co_return response;
 }
@@ -48,7 +48,7 @@ Task<HttpResponsePtr> download(std::shared_ptr<Services> services, HttpRequestPt
                                std::string name) {
     co_return co_await services->workers.submit([&] {
         const auto file = services->uploads.find(name);
-        if (!file) return jsonError(k404NotFound, "Upload not found.");
+        if (!file) return apiError(*request, k404NotFound, "NOT_FOUND", "Upload not found.");
         auto response = HttpResponse::newFileResponse(file->first.string(), name, CT_CUSTOM,
                                                       std::string(file->second.mime), request);
         response->addHeader("X-Content-Type-Options", "nosniff");
