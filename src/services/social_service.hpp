@@ -11,6 +11,11 @@ struct SearchResults {
     std::vector<UserMatch> users;
 };
 
+struct CommentCursor {
+    std::string created_at;
+    std::int64_t id;
+};
+
 class SocialService {
 public:
     static constexpr std::int64_t pageSize = 20;
@@ -29,7 +34,7 @@ public:
     drogon::Task<std::optional<std::vector<CommentView>>> thread(
         std::int64_t post, std::int64_t page, const UserService& users) const;
     drogon::Task<std::optional<std::vector<CommentView>>> olderComments(
-        std::int64_t post, CommentCursor before) const;
+        std::int64_t post, CommentCursor before, const UserService& users) const;
     drogon::Task<std::optional<CommentView>> comment(std::int64_t post, std::int64_t user,
                                                      std::string username, std::string text) const;
     drogon::Task<std::optional<LikeView>> like(std::int64_t post, std::int64_t user, bool liked) const;

@@ -138,7 +138,8 @@ void registerSocialRoutes(const std::shared_ptr<Services>& services, const std::
                 if (time.empty() || id.empty() || parameters.contains("page")) {
                     throw RequestValidationError("Send before_time and before_id together without page.");
                 }
-                auto comments = co_await services->social.olderComments(post, CommentCursor{time, positiveInteger(id)});
+                auto comments = co_await services->social.olderComments(
+                    post, CommentCursor{time, positiveInteger(id)}, services->users);
                 if (!comments) co_return missingPost(*request);
                 co_return noStore(pageResponse(*request, std::move(*comments), 1, SocialService::commentBatchSize));
             }

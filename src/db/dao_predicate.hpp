@@ -38,6 +38,15 @@ struct DaoPredicate {
     bool negated = false;
 };
 
+template <auto First, auto Second>
+struct DaoTupleLess {
+    using FirstValue = typename Nullable<typename DaoMember<decltype(First)>::Type>::Type;
+    using SecondValue = typename Nullable<typename DaoMember<decltype(Second)>::Type>::Type;
+
+    FirstValue first;
+    SecondValue second;
+};
+
 template <PredicateOp Op, typename T>
 auto operand(T&& value) {
     if constexpr (std::is_convertible_v<T, std::string_view> &&
@@ -70,6 +79,19 @@ template <typename T> auto gt(T&& value) { return detail::operand<detail::Predic
 template <typename T> auto gte(T&& value) { return detail::operand<detail::PredicateOp::gte>(std::forward<T>(value)); }
 template <typename T> auto lt(T&& value) { return detail::operand<detail::PredicateOp::lt>(std::forward<T>(value)); }
 template <typename T> auto lte(T&& value) { return detail::operand<detail::PredicateOp::lte>(std::forward<T>(value)); }
+
+template <auto First, auto Second, typename FirstValue, typename SecondValue>
+    requires std::is_member_object_pointer_v<decltype(First)> &&
+             std::is_member_object_pointer_v<decltype(Second)> &&
+             (detail::validOperand<typename detail::DaoMember<decltype(First)>::Type,
+                                  detail::PredicateOp::lt, FirstValue>()) &&
+             (detail::validOperand<typename detail::DaoMember<decltype(Second)>::Type,
+                                  detail::PredicateOp::lt, SecondValue>())
+auto whereTupleLess(FirstValue&& first, SecondValue&& second) {
+    using Predicate = detail::DaoTupleLess<First, Second>;
+    return Predicate{typename Predicate::FirstValue(std::forward<FirstValue>(first)),
+                     typename Predicate::SecondValue(std::forward<SecondValue>(second))};
+}
 
 inline auto contains(std::string_view value) {
     return detail::operand<detail::PredicateOp::contains>(value);

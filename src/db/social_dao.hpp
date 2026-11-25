@@ -34,11 +34,6 @@ struct CommentView {
     std::string created_at;
 };
 
-struct CommentCursor {
-    std::string created_at;
-    std::int64_t id;
-};
-
 struct LikeView {
     std::int64_t like_count;
     bool liked;
@@ -80,7 +75,8 @@ public:
     drogon::Task<std::vector<CommentView>> thread(std::int64_t post, std::int64_t limit,
                                                  std::int64_t offset, const UserDao& users) const;
     drogon::Task<std::vector<CommentView>> older(
-        std::int64_t post, CommentCursor before, std::int64_t limit) const;
+        std::int64_t post, DaoDateTime beforeTime, std::int64_t beforeId,
+        std::int64_t limit, const UserDao& users) const;
 private:
     using BaseDao::BaseDao;
 };

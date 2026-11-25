@@ -850,6 +850,51 @@ TEST_CASE("Base DAO provides asynchronous CRUD and bound SQL", "[users]") {
     CHECK(drogon::sync_wait(users.count(where<&UserRecord::password_hash>("hash"))) == 1);
 }
 
+template <auto First, auto Second>
+concept SupportsUserCursor = requires(const UserDao& users, DaoDateTime time) {
+    users.find(whereTupleLess<First, Second>(time, std::int64_t{1}));
+};
+
+static_assert(SupportsUserCursor<&UserRecord::created_at, &UserRecord::id>);
+static_assert(!SupportsUserCursor<&UserRecord::created_at, &PostRecord::id>);
+
+TEST_CASE("A typed tuple filter includes earlier rows and breaks ties by ID in a transaction", "[users]") {
+    const auto database = openTestDatabase(":memory:");
+    const auto users = drogon::sync_wait(UserDao::init(database));
+    runOnEventLoop(database->transaction([&](DaoTransaction& tx) -> drogon::Task<> {
+        const auto tied = co_await users.create(tx, {{"tied", "match"}});
+        const auto cursor = co_await users.create(tx, {{"cursor", "match"}});
+        const auto laterTie = co_await users.create(tx, {{"later tie", "match"}});
+        const auto earlier = co_await users.create(tx, {{"earlier", "match"}});
+        const auto unrelated = co_await users.create(tx, {{"unrelated", "other"}});
+        const auto stamp = detail::parseDaoDateTime("2026-11-25T01:00:00.000Z");
+        co_await users.executeSql(tx, "UPDATE users SET created_at = ? WHERE id IN (?, ?, ?)",
+            stamp, tied, cursor, laterTie);
+        co_await users.executeSql(tx, "UPDATE users SET created_at = ? WHERE id IN (?, ?)",
+            stamp - std::chrono::seconds(1), earlier, unrelated);
+        const auto rows = co_await users.find(tx, 5, 0,
+            where<&UserRecord::password_hash>("match"),
+            whereTupleLess<&UserRecord::created_at, &UserRecord::id>(stamp, cursor),
+            orderBy<&UserRecord::created_at>(SortDirection::desc),
+            orderBy<&UserRecord::id>(SortDirection::desc));
+        REQUIRE(rows.size() == 2);
+        CHECK(rows[0].id == tied);
+        CHECK(rows[1].id == earlier);
+    }));
+}
+
+TEST_CASE("A soft-deleted demo account still counts as existing", "[users]") {
+    const auto users = drogon::sync_wait(UserDao::init(openTestDatabase(":memory:")));
+    CHECK_FALSE(drogon::sync_wait(users.hasDemo()));
+    REQUIRE(drogon::sync_wait(users.insertDemo("demo", "hash")));
+    const auto demo = drogon::sync_wait(users.findByUsername("demo"));
+    REQUIRE(demo);
+    CHECK(drogon::sync_wait(users.hasDemo()));
+    REQUIRE(drogon::sync_wait(users.softDeleteById(demo->id.value())));
+    CHECK_FALSE(drogon::sync_wait(users.findByUsername("demo")));
+    CHECK(drogon::sync_wait(users.hasDemo()));
+}
+
 TEST_CASE("Generated IDs and managed timestamps cover custom demo writes and opt-out", "[users]") {
     TemporaryDirectory temporary;
     const auto users = drogon::sync_wait(UserDao::init(openTestDatabase(temporary.path() / "managed.sqlite3")));

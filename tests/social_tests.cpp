@@ -207,7 +207,7 @@ TEST_CASE("Older comment batches skip deleted rows and stay stable as replies ar
         const auto author = co_await fixture.account("alice");
         const auto post = co_await fixture.social.post(author, "alice", "Parent");
         const auto stamp = "2026-11-25T01:00:00.000Z";
-        const auto empty = co_await fixture.social.olderComments(post.id, {stamp, 1});
+        const auto empty = co_await fixture.social.olderComments(post.id, {stamp, 1}, fixture.users);
         REQUIRE(empty);
         CHECK(empty->empty());
 
@@ -216,7 +216,7 @@ TEST_CASE("Older comment batches skip deleted rows and stay stable as replies ar
             const auto reply = co_await fixture.social.comment(post.id, author, "alice", "Comment");
             REQUIRE(reply);
             if (i == 0) {
-                const auto noOlder = co_await fixture.social.olderComments(post.id, {reply->created_at, reply->id});
+                const auto noOlder = co_await fixture.social.olderComments(post.id, {reply->created_at, reply->id}, fixture.users);
                 REQUIRE(noOlder);
                 CHECK(noOlder->empty());
             }
@@ -225,7 +225,7 @@ TEST_CASE("Older comment batches skip deleted rows and stay stable as replies ar
         const auto& dao = fixture.users.dao();
         co_await dao.executeSql("UPDATE social_comments SET created_at = ? WHERE post_id = ?", stamp, post.id);
         co_await dao.executeSql("UPDATE social_comments SET deleted_at = ? WHERE id = ?", stamp, ids[9]);
-        const auto first = co_await fixture.social.olderComments(post.id, {stamp, ids.back()});
+        const auto first = co_await fixture.social.olderComments(post.id, {stamp, ids.back()}, fixture.users);
         REQUIRE(first);
         REQUIRE(first->size() == 6);
         CHECK((*first)[0].id == ids[11]);
@@ -234,12 +234,12 @@ TEST_CASE("Older comment batches skip deleted rows and stay stable as replies ar
         CHECK((*first)[4].id == ids[6]);
 
         REQUIRE(co_await fixture.social.comment(post.id, author, "alice", "New reply"));
-        const auto second = co_await fixture.social.olderComments(post.id, {stamp, (*first)[4].id});
+        const auto second = co_await fixture.social.olderComments(post.id, {stamp, (*first)[4].id}, fixture.users);
         REQUIRE(second);
         REQUIRE(second->size() == 6);
         CHECK((*second)[0].id == ids[5]);
         CHECK((*second)[4].id == ids[1]);
-        const auto tail = co_await fixture.social.olderComments(post.id, {stamp, (*second)[4].id});
+        const auto tail = co_await fixture.social.olderComments(post.id, {stamp, (*second)[4].id}, fixture.users);
         REQUIRE(tail);
         REQUIRE(tail->size() == 1);
         CHECK(tail->front().id == ids.front());

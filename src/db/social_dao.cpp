@@ -71,12 +71,9 @@ drogon::Task<std::vector<PostMatch>> SocialPostDao::search(std::string query) co
     co_return result;
 }
 
-drogon::Task<std::vector<CommentView>> SocialCommentDao::thread(
-    std::int64_t post, std::int64_t limit, std::int64_t offset, const UserDao& users) const {
-    const auto rows = co_await find(limit, offset, select<&SocialComment::created_at>(),
-        where<&SocialComment::post_id>(post),
-        orderBy<&SocialComment::created_at>(), orderBy<&SocialComment::id>(),
-        withForeign<&SocialComment::author_id>(users));
+namespace {
+
+std::vector<CommentView> commentViews(const std::vector<SocialComment>& rows) {
     std::vector<CommentView> result;
     result.reserve(rows.size());
     for (const auto& row : rows) {
@@ -84,24 +81,30 @@ drogon::Task<std::vector<CommentView>> SocialCommentDao::thread(
         result.push_back({row.id.value(), author ? author->username.value : "Deleted user",
                           row.text, detail::formatDaoDateTime(row.created_at.value())});
     }
-    co_return result;
+    return result;
+}
+
+}
+
+drogon::Task<std::vector<CommentView>> SocialCommentDao::thread(
+    std::int64_t post, std::int64_t limit, std::int64_t offset, const UserDao& users) const {
+    const auto rows = co_await find(limit, offset, select<&SocialComment::created_at>(),
+        where<&SocialComment::post_id>(post),
+        orderBy<&SocialComment::created_at>(), orderBy<&SocialComment::id>(),
+        withForeign<&SocialComment::author_id>(users));
+    co_return commentViews(rows);
 }
 
 drogon::Task<std::vector<CommentView>> SocialCommentDao::older(
-    std::int64_t post, CommentCursor before, std::int64_t limit) const {
-    const auto rows = co_await executeSql(
-        "SELECT c.id, COALESCE(u.username, 'Deleted user'), c.text, c.created_at "
-        "FROM social_comments c LEFT JOIN users u ON u.id = c.author_id AND u.deleted_at IS NULL "
-        "WHERE c.post_id = ? AND c.deleted_at IS NULL AND (c.created_at, c.id) < (?, ?) "
-        "ORDER BY c.created_at DESC, c.id DESC LIMIT ?",
-        post, std::move(before.created_at), before.id, limit);
-    std::vector<CommentView> result;
-    result.reserve(rows.size());
-    for (const auto& row : rows) {
-        result.push_back({row[0].as<std::int64_t>(), row[1].as<std::string>(),
-                          row[2].as<std::string>(), row[3].as<std::string>()});
-    }
-    co_return result;
+    std::int64_t post, DaoDateTime beforeTime, std::int64_t beforeId,
+    std::int64_t limit, const UserDao& users) const {
+    const auto rows = co_await find(limit, 0, select<&SocialComment::created_at>(),
+        where<&SocialComment::post_id>(post),
+        whereTupleLess<&SocialComment::created_at, &SocialComment::id>(beforeTime, beforeId),
+        orderBy<&SocialComment::created_at>(SortDirection::desc),
+        orderBy<&SocialComment::id>(SortDirection::desc),
+        withForeign<&SocialComment::author_id>(users));
+    co_return commentViews(rows);
 }
 
 drogon::Task<LikeView> SocialLikeDao::set(std::int64_t post, std::int64_t user, bool liked) const {

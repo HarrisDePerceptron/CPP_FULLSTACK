@@ -60,14 +60,15 @@ drogon::Task<std::optional<std::vector<CommentView>>> SocialService::thread(
 }
 
 drogon::Task<std::optional<std::vector<CommentView>>> SocialService::olderComments(
-    std::int64_t post, CommentCursor before) const {
+    std::int64_t post, CommentCursor before, const UserService& users) const {
     if (!co_await posts_.findById(post)) co_return std::nullopt;
+    DaoDateTime beforeTime;
     try {
-        detail::parseDaoDateTime(before.created_at);
+        beforeTime = detail::parseDaoDateTime(before.created_at);
     } catch (const std::runtime_error&) {
         throw RequestValidationError("Use a valid UTC comment timestamp.");
     }
-    co_return co_await comments_.older(post, std::move(before), commentBatchSize + 1);
+    co_return co_await comments_.older(post, beforeTime, before.id, commentBatchSize + 1, users.dao());
 }
 
 drogon::Task<std::optional<CommentView>> SocialService::comment(

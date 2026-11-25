@@ -107,6 +107,11 @@ class BaseDao {
     template <auto Member>
     static constexpr bool validModifier(std::type_identity<detail::DaoPredicate<Member>>) { return recordMember<Member>; }
 
+    template <auto First, auto Second>
+    static constexpr bool validModifier(std::type_identity<detail::DaoTupleLess<First, Second>>) {
+        return recordMember<First> && recordMember<Second>;
+    }
+
     template <auto Member, typename Dao>
     static constexpr bool validModifier(std::type_identity<detail::ForeignSelection<Member, Dao>>) {
         return detail::ForeignSelectionFor<Member, Record, Dao>;
@@ -594,6 +599,11 @@ private:
         return std::tie(predicate);
     }
 
+    template <auto First, auto Second>
+    static auto collect(FindQuery&, detail::DaoTupleLess<First, Second>& predicate) {
+        return std::tie(predicate);
+    }
+
     template <auto Member, typename Dao>
     static auto collect(FindQuery& query, detail::ForeignSelection<Member, Dao>) {
         query.selected.push_back(glz::get_name<Member>());
@@ -767,6 +777,21 @@ private:
         }
         if (predicate.negated) return "NOT COALESCE((" + expression + "), FALSE)";
         return "(" + expression + ")";
+    }
+
+    template <auto First, auto Second>
+    std::string predicateSql(const detail::DaoTupleLess<First, Second>& predicate,
+                             std::vector<detail::QueryValue>& values) const {
+        constexpr auto firstColumn = glz::get_name<First>();
+        constexpr auto secondColumn = glz::get_name<Second>();
+        requireEnabledColumn(firstColumn);
+        requireEnabledColumn(secondColumn);
+        const auto firstParameter = parameter(values.size() + 1);
+        const auto secondParameter = parameter(values.size() + 2);
+        values.push_back(queryValue(predicate.first));
+        values.push_back(queryValue(predicate.second));
+        return "(" + detail::quoteIdentifier(firstColumn) + ", " + detail::quoteIdentifier(secondColumn) +
+               ") < (" + firstParameter + ", " + secondParameter + ")";
     }
 
     template <typename... Predicates>

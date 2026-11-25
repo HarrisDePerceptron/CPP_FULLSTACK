@@ -36,8 +36,7 @@ drogon::Task<bool> UserDao::insertAccount(std::string username, std::string pass
 }
 
 drogon::Task<bool> UserDao::hasDemo() const {
-    const auto rows = co_await executeSql("SELECT 1 FROM users WHERE seed_key = 'demo'");
-    co_return !rows.empty();
+    co_return (co_await count(includeDeleted(), where<&UserRecord::seed_key>("demo"))) != 0;
 }
 
 drogon::Task<bool> UserDao::insertDemo(std::string username, std::string password_hash) const {
