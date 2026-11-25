@@ -54,7 +54,7 @@ The database layer opens one shared SQLite backend through Drogon. Each DAO maps
 Use a fields struct with a `table_name`, wrap it in `DaoRecord`, and derive a DAO from `BaseDao`. Field names become column names. `DaoRecord` supplies a generated integer ID unless a field declares `Primary<T>`. Timestamps are enabled by default. Each DAO can opt out by passing `DaoOptions{.timestamps = false}` as the third template argument to `BaseDao`.
 
 ```cpp
-#include "db/base_dao.hpp"
+#include "db/base_dao.h"
 
 #include <print>
 #include <string>
@@ -73,7 +73,7 @@ using ProjectRecord = DaoRecord<ProjectFields>;
 class ProjectDao final : public BaseDao<ProjectDao, ProjectRecord> {
 public:
     static drogon::Task<ProjectDao> init(DatabaseBackendPtr database) {
-        return finishInitialization(ProjectDao(std::move(database)));
+        return finish_initialization(ProjectDao(std::move(database)));
     }
 
 private:
@@ -97,7 +97,7 @@ using TaskRecord = DaoRecord<TaskFields>;
 class TaskDao final : public BaseDao<TaskDao, TaskRecord> {
 public:
     static drogon::Task<TaskDao> init(DatabaseBackendPtr database) {
-        return finishInitialization(TaskDao(std::move(database)));
+        return finish_initialization(TaskDao(std::move(database)));
     }
 
 private:
@@ -117,7 +117,7 @@ Place this coroutine after the definitions above. It uses an in-memory database 
 namespace APP_NAMESPACE {
 
 drogon::Task<> databaseExample() {
-    auto database = co_await openSqliteDatabase(":memory:");
+    auto database = co_await open_sqlite_database(":memory:");
     auto projects = co_await ProjectDao::init(database);
     auto tasks = co_await TaskDao::init(database);
 
@@ -132,13 +132,13 @@ drogon::Task<> databaseExample() {
     auto page = co_await tasks.find()
         .limit(20)
         .select<&TaskRecord::note, &TaskRecord::related_project_id>()
-        .orderBy<&TaskRecord::title>()
+        .order_by<&TaskRecord::title>()
         .where<&TaskRecord::project_id>(website_id)
         .collect();
 
     if (!page.empty()) {
         auto& task = page.front();
-        if (task.isLoaded<&TaskRecord::note>() && task.note) {
+        if (task.is_loaded<&TaskRecord::note>() && task.note) {
             std::println("Note: {}", *task.note);
         }
         task.status.value = TaskStatus::done;
@@ -153,18 +153,18 @@ drogon::Task<> databaseExample() {
     std::println("Matching tasks: {}", total);
 
     // Read by ID and explicitly fetch the related project.
-    const auto task = co_await tasks.findById(task_id)
-        .withForeign<&TaskRecord::related_project_id>(projects)
+    const auto task = co_await tasks.find_by_id(task_id)
+        .with_foreign<&TaskRecord::related_project_id>(projects)
         .collect();
     if (task && task->related_project_id.record()) {
         std::println("Related project: {}", task->related_project_id.record()->name.value);
     }
 
     // Run custom SQL with a bound parameter.
-    const auto rows = co_await tasks.executeSql("SELECT title FROM tasks WHERE id = ?", task_id);
+    const auto rows = co_await tasks.execute_sql("SELECT title FROM tasks WHERE id = ?", task_id);
     if (!rows.empty()) std::println("Title: {}", rows[0]["title"].as<std::string>());
 
-    co_await tasks.deleteById(task_id);
+    co_await tasks.delete_by_id(task_id);
 }
 
 }
@@ -176,21 +176,21 @@ drogon::Task<> databaseExample() {
 | --- | --- |
 | `init(database)` | Creates or validates the table and applies supported additive schema upgrades. |
 | `create(record)` | Inserts a row and returns its primary key. Leave generated IDs empty on insert. |
-| `find().collect()` | Defaults to 100 rows at offset 0. Returns the key and required fields, sorted by newest update when timestamps are enabled and by primary key otherwise. Use `.select<...>()` or `.selectAll()` for nullable fields, and `.orderBy<Member>(SortDirection::desc)` for descending order. |
-| `findById(id).collect()` | Returns an optional full record. Chain `.withForeign<Member>(target_dao)` to load selected related records. |
+| `find().collect()` | Defaults to 100 rows at offset 0. Returns the key and required fields, sorted by newest update when timestamps are enabled and by primary key otherwise. Use `.select<...>()` or `.select_all()` for nullable fields, and `.order_by<Member>(SortDirection::desc)` for descending order. |
+| `find_by_id(id).collect()` | Returns an optional full record. Chain `.with_foreign<Member>(target_dao)` to load selected related records. |
 | `update(record)` | Updates by primary key and preserves fields that the query omitted. A loaded nullable field set to `std::nullopt` clears the value. |
-| `updateById(id).set<Member>(value).execute()` | Updates only assigned fields. Use `std::nullopt` to clear a nullable field. Returns false for missing and soft-deleted rows. |
-| `createMany(records)` | Inserts the batch atomically and returns keys in input order. |
-| `updateMany(records)` | Updates the batch atomically. Returns false and rolls back if a row is missing or soft-deleted. |
-| `deleteById(id)` | Deletes by primary key and reports whether a row was deleted. |
-| `deleteMany(ids)`, `softDeleteMany(ids)` | Delete by primary key atomically and return the number of rows changed. |
-| `insertIfAbsent<Key>(record)`, `upsert<Key, Members...>(record)` | Handle conflicts on a declared unique field or explicit primary key. Insert-if-absent returns whether it inserted. Upsert updates only the listed fields on conflict and returns the row's key. |
+| `update_by_id(id).set<Member>(value).execute()` | Updates only assigned fields. Use `std::nullopt` to clear a nullable field. Returns false for missing and soft-deleted rows. |
+| `create_many(records)` | Inserts the batch atomically and returns keys in input order. |
+| `update_many(records)` | Updates the batch atomically. Returns false and rolls back if a row is missing or soft-deleted. |
+| `delete_by_id(id)` | Deletes by primary key and reports whether a row was deleted. |
+| `delete_many(ids)`, `soft_delete_many(ids)` | Delete by primary key atomically and return the number of rows changed. |
+| `insert_if_absent<Key>(record)`, `upsert<Key, Members...>(record)` | Handle conflicts on a declared unique field or explicit primary key. Insert-if-absent returns whether it inserted. Upsert updates only the listed fields on conflict and returns the row's key. |
 | `count().where<Member>(value).collect()` | Counts matches across all pages. Omit filters to count all active rows. |
-| `executeSql(sql, args...)` | Runs custom, backend-specific SQL with bound arguments. |
+| `execute_sql(sql, args...)` | Runs custom, backend-specific SQL with bound arguments. |
 
 `.where<Member>(value)` means equality. Both `find()` and `count()` support
-`.whereGt`, `.whereGte`, `.whereLt`, `.whereLte`, `.whereIn`, and
-`.whereContains`. For example, use `.whereIn<&TaskRecord::id>({1, 2})` for
+`.where_gt`, `.where_gte`, `.where_lt`, `.where_lte`, `.where_in`, and
+`.where_contains`. For example, use `.where_in<&TaskRecord::id>({1, 2})` for
 membership. Separate filters combine with `AND`. Contains matches literal,
 case-sensitive text. Pass a reusable or negated predicate to `.where(predicate)`.
 
@@ -199,7 +199,7 @@ case-sensitive text. Pass a reusable or negated predicate to `.where(predicate)`
 For a many-to-many table, use `CompositeUnique` to prevent duplicates without replacing the generated ID.
 
 ```cpp
-#include "db/user_dao.hpp"
+#include "db/user_dao.h"
 
 namespace APP_NAMESPACE {
 
@@ -226,8 +226,8 @@ the usual pagination, filters, and ordering:
 ```cpp
 auto page = co_await posts.find()
     .limit(20)
-    .withForeign<&PostRecord::author_id>(users)
-    .withForeign<&PostRecord::reviewer_id>(reviewers)
+    .with_foreign<&PostRecord::author_id>(users)
+    .with_foreign<&PostRecord::reviewer_id>(reviewers)
     .collect();
 ```
 
@@ -239,16 +239,16 @@ the same transaction. Finish the builder with `.collect()` and await the result.
 ### Soft-delete and restore records
 
 Every DAO table has a managed, nullable `deleted_at` column. Existing rows
-start active. Use `softDeleteById(id)` to mark a row deleted and
-`restoreById(id)` to make it active again. Both accept a transaction as their
+start active. Use `soft_delete_by_id(id)` to mark a row deleted and
+`restore_by_id(id)` to make it active again. Both accept a transaction as their
 first argument and return whether the row changed state. Timestamp-enabled
-tables refresh `updated_at` for both operations. `deleteById(id)` physically
+tables refresh `updated_at` for both operations. `delete_by_id(id)` physically
 removes either an active or a deleted row.
 
 Normal reads, counts, and foreign loading use active rows. Chain
-`.includeDeleted()` on a `find()`, `findById(id)`, or `count()` builder to
+`.include_deleted()` on a `find()`, `find_by_id(id)`, or `count()` builder to
 include deleted rows for that query. Foreign targets still use active rows. Use
-`.select<&Record::deleted_at>()` or `.selectAll()`
+`.select<&Record::deleted_at>()` or `.select_all()`
 to read the timestamp in a list query. Deleted rows retain their foreign
 references and unique values until physically removed.
 
@@ -268,7 +268,7 @@ co_await database->transaction([&](DaoTransaction& tx) -> drogon::Task<> {
 });
 ```
 
-The backend commits when the callback completes and rolls back if it throws. Use the context only inside the callback. On SQLite the callback holds the shared connection, so awaiting an ordinary DAO call that omits `tx` would wait for that same connection. Let the callback manage transaction boundaries, and use `executeSql(tx, sql, args...)` for custom queries within it.
+The backend commits when the callback completes and rolls back if it throws. Use the context only inside the callback. On SQLite the callback holds the shared connection, so awaiting an ordinary DAO call that omits `tx` would wait for that same connection. Let the callback manage transaction boundaries, and use `execute_sql(tx, sql, args...)` for custom queries within it.
 
 ## Configuration
 
@@ -284,8 +284,9 @@ Edit [config.json](config.json) to change the listener or demo credentials. The 
 
 ## Development rules
 
-- Keep `.hpp` files beside their `.cpp` implementations. Use four spaces and put opening braces on the declaration line.
-- Keep route handlers small. Delegate persistence and outbound calls, use `co_await` for asynchronous work, `apiOk` and `apiError` for typed JSON replies, and `std::println` for console output.
+- Keep `.h` files beside their `.cpp` implementations. Use four spaces and put opening braces on the declaration line.
+- Use snake_case for project-owned C++ functions, methods, variables, fields, constants, and enum values. Use PascalCase for types.
+- Keep route handlers small. Delegate persistence and outbound calls, use `co_await` for asynchronous work, `api_ok` and `api_error` for typed JSON replies, and `std::println` for console output.
 - After editing a view or Tailwind source, run `npm ci` and `npm run build:css` with Node.js installed. Include the regenerated `public/demo.css` in the change.
 - Keep `.env`, local databases, and runtime uploads out of commits. See [AGENTS.md](AGENTS.md) for the full repository guidelines.
 
@@ -340,8 +341,8 @@ List requests use one-based `page` and `per_page` (default 20, maximum 100).
 `has_more` comes from fetching one extra matching row. Responses have no total
 count. Single-item and empty DELETE responses use page and page size 1.
 
-Use `apiOk(*request, item)` for success and
-`apiError(*request, status, code, message)` for explicit errors. Errors include
+Use `api_ok(*request, item)` for success and
+`api_error(*request, status, code, message)` for explicit errors. Errors include
 `success: false`, a structured `error`, and request metadata. Throw
 `RequestValidationError(message, fields)` to automatically return
 `400 VALIDATION_FAILED`. The optional field map stores a list of messages per
@@ -353,11 +354,11 @@ field. The response's `X-Request-ID` header matches `meta.request_id`.
 
 | Policy member | Purpose |
 | --- | --- |
-| `Response` and `toResponse(const TodoRecord&)` | Return fields clients may read in a Glaze-serializable DTO. |
-| `Create`, `parseCreate(const Json::Value&)`, and `makeRecord(Create)` | Validate a POST object, reject unknown fields, and build the new record. |
-| `Patch`, `parsePatch(const Json::Value&)`, and `applyPatch(TodoRecord&, Patch)` | Validate writable fields and apply only supplied changes. |
-| `addFilter(TodoDao::EqualityFilters&, std::string_view, std::string)` | Map each allowed query key to a typed equality filter and reject unknown keys. |
-| Optional `parseId(std::string_view)` | Validate resource-specific ID formats. Generated integer IDs use positive decimal values by default. |
+| `Response` and `to_response(const TodoRecord&)` | Return fields clients may read in a Glaze-serializable DTO. |
+| `Create`, `parse_create(const Json::Value&)`, and `make_record(Create)` | Validate a POST object, reject unknown fields, and build the new record. |
+| `Patch`, `parse_patch(const Json::Value&)`, and `apply_patch(TodoRecord&, Patch)` | Validate writable fields and apply only supplied changes. |
+| `add_filter(TodoDao::EqualityFilters&, std::string_view, std::string)` | Map each allowed query key to a typed equality filter and reject unknown keys. |
+| Optional `parse_id(std::string_view)` | Validate resource-specific ID formats. Generated integer IDs use positive decimal values by default. |
 
 For example, after validating that `done` is `true` or `false`, use
 `filters.equal<&TodoFields::done>(value == "true")`. Throw

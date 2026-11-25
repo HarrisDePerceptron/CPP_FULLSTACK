@@ -1,9 +1,9 @@
 #pragma once
 
-#include "db/database_backend.hpp"
+#include "db/database_backend.h"
 
 #include <stdexcept>
-#include "utils/request_validation.hpp"
+#include "utils/request_validation.h"
 
 namespace APP_NAMESPACE {
 
@@ -32,23 +32,23 @@ public:
         const auto rows = co_await dao_.find().limit(page.limit).offset(page.offset).matching(std::move(filters)).collect();
         std::vector<Response> result;
         result.reserve(rows.size());
-        for (const auto& row : rows) result.push_back(Resource::toResponse(row));
+        for (const auto& row : rows) result.push_back(Resource::to_response(row));
         co_return result;
     }
 
     virtual drogon::Task<std::optional<Response>> get(Id id) const {
-        const auto row = co_await dao_.findById(std::move(id)).collect();
+        const auto row = co_await dao_.find_by_id(std::move(id)).collect();
         if (!row) co_return std::nullopt;
-        co_return Resource::toResponse(*row);
+        co_return Resource::to_response(*row);
     }
 
     virtual drogon::Task<Response> create(Create input) const {
         std::optional<Response> result;
         co_await dao_.transaction([&](DaoTransaction& tx) -> drogon::Task<> {
-            const auto id = co_await dao_.create(tx, Resource::makeRecord(std::move(input)));
-            const auto row = co_await dao_.findById(tx, id).collect();
+            const auto id = co_await dao_.create(tx, Resource::make_record(std::move(input)));
+            const auto row = co_await dao_.find_by_id(tx, id).collect();
             if (!row) throw std::logic_error("Created row could not be read");
-            result.emplace(Resource::toResponse(*row));
+            result.emplace(Resource::to_response(*row));
         });
         co_return std::move(result).value();
     }
@@ -56,19 +56,19 @@ public:
     virtual drogon::Task<std::optional<Response>> patch(Id id, Patch input) const {
         std::optional<Response> result;
         co_await dao_.transaction([&](DaoTransaction& tx) -> drogon::Task<> {
-            auto row = co_await dao_.findById(tx, id).collect();
+            auto row = co_await dao_.find_by_id(tx, id).collect();
             if (!row) co_return;
-            Resource::applyPatch(*row, std::move(input));
+            Resource::apply_patch(*row, std::move(input));
             if (!co_await dao_.update(tx, std::move(*row))) throw std::logic_error("Patch target disappeared");
-            const auto updated = co_await dao_.findById(tx, id).collect();
+            const auto updated = co_await dao_.find_by_id(tx, id).collect();
             if (!updated) throw std::logic_error("Updated row could not be read");
-            result.emplace(Resource::toResponse(*updated));
+            result.emplace(Resource::to_response(*updated));
         });
         co_return result;
     }
 
     virtual drogon::Task<bool> remove(Id id) const {
-        return dao_.deleteById(std::move(id));
+        return dao_.delete_by_id(std::move(id));
     }
 
 protected:

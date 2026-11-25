@@ -1,6 +1,6 @@
 #pragma once
 
-#include "dao_record.hpp"
+#include "dao_record.h"
 
 #include <drogon/utils/coroutine.h>
 
@@ -8,11 +8,11 @@
 
 namespace APP_NAMESPACE {
 
-template <typename Record, bool Nullable = true>
+template <typename Record, bool nullable = true>
 class Foreign {
 public:
     using TargetRecord = Record;
-    using Key = std::conditional_t<Nullable, std::optional<typename Record::Id>, typename Record::Id>;
+    using Key = std::conditional_t<nullable, std::optional<typename Record::Id>, typename Record::Id>;
 
     Foreign() = default;
     template <typename U>
@@ -22,9 +22,9 @@ public:
     const Key& key() const { return key_; }
     const std::optional<Record>& record() const { return record_; }
 
-    void setRecord(const Record& record) { record_ = record; }
+    void set_record(const Record& record) { record_ = record; }
 
-    void setKey(Key key) {
+    void set_key(Key key) {
         key_ = std::move(key);
         record_.reset();
     }
@@ -32,11 +32,11 @@ public:
     template <typename Dao, typename... Context>
     drogon::Task<bool> load(const Dao& dao, const Context&... context) {
         record_.reset();
-        if constexpr (Nullable) {
+        if constexpr (nullable) {
             if (!key_) co_return false;
-            record_ = co_await dao.findById(context..., *key_).collect();
+            record_ = co_await dao.find_by_id(context..., *key_).collect();
         } else {
-            record_ = co_await dao.findById(context..., key_).collect();
+            record_ = co_await dao.find_by_id(context..., key_).collect();
         }
         co_return record_.has_value();
     }
@@ -54,9 +54,9 @@ namespace detail {
 template <typename T>
 struct ForeignField;
 
-template <typename Record, bool Nullable>
-struct ForeignField<Foreign<Record, Nullable>> {
-    static Foreign<Record, Nullable>& get(Foreign<Record, Nullable>& field) { return field; }
+template <typename Record, bool nullable>
+struct ForeignField<Foreign<Record, nullable>> {
+    static Foreign<Record, nullable>& get(Foreign<Record, nullable>& field) { return field; }
 };
 
 template <typename T, ColumnConstraint Constraint>
@@ -69,38 +69,38 @@ struct ForeignField<SchemaField<T, Constraint>> {
 
 template <typename T>
     requires requires(T& field) { ForeignField<T>::get(field); }
-decltype(auto) foreignField(T& field) { return ForeignField<T>::get(field); }
+decltype(auto) foreign_field(T& field) { return ForeignField<T>::get(field); }
 
-template <auto Member, typename Dao>
+template <auto member, typename Dao>
 struct ForeignSelection {
     std::reference_wrapper<const Dao> dao;
 };
 
-template <auto Member, typename Source, typename Dao>
+template <auto member, typename Source, typename Dao>
 concept ForeignSelectionFor = requires(Source& source) {
     requires std::same_as<typename std::remove_reference_t<decltype(
-        foreignField(source.*Member))>::TargetRecord, typename Dao::RecordType>;
+        foreign_field(source.*member))>::TargetRecord, typename Dao::RecordType>;
 };
 
-template <typename Record, bool Nullable>
-struct FieldTraits<Foreign<Record, Nullable>> {
-    using Field = Foreign<Record, Nullable>;
+template <typename Record, bool nullable>
+struct FieldTraits<Foreign<Record, nullable>> {
+    using Field = Foreign<Record, nullable>;
     using Value = typename Field::Key;
     static constexpr bool primary = false, unique = false, indexed = false;
 
     static const Value& unwrap(const Field& field) { return field.key(); }
-    static void setKey(Field& field, Value key) { field.setKey(std::move(key)); }
-    static std::optional<ColumnDefault> defaultMetadata() { return std::nullopt; }
-    static constexpr std::optional<ForeignKey> foreignKey() {
-        return ForeignKey{Record::table_name, Record::keyColumn};
+    static void set_key(Field& field, Value key) { field.set_key(std::move(key)); }
+    static std::optional<ColumnDefault> default_metadata() { return std::nullopt; }
+    static constexpr std::optional<ForeignKey> foreign_key() {
+        return ForeignKey{Record::table_name, Record::key_column};
     }
 };
 
 }
 
-template <auto Member, typename Dao>
-auto withForeign(Dao& dao) {
-    return detail::ForeignSelection<Member, std::remove_cv_t<Dao>>{std::cref(dao)};
+template <auto member, typename Dao>
+auto with_foreign(Dao& dao) {
+    return detail::ForeignSelection<member, std::remove_cv_t<Dao>>{std::cref(dao)};
 }
 
 }

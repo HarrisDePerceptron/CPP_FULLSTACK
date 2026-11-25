@@ -1,6 +1,6 @@
 #pragma once
 
-#include "db/social_dao.hpp"
+#include "db/social_dao.h"
 
 namespace APP_NAMESPACE {
 
@@ -18,8 +18,8 @@ struct CommentCursor {
 
 class SocialService {
 public:
-    static constexpr std::int64_t pageSize = 20;
-    static constexpr std::int64_t commentBatchSize = 5;
+    static constexpr std::int64_t page_size = 20;
+    static constexpr std::int64_t comment_batch_size = 5;
 
     SocialService(SocialPostDao posts, SocialCommentDao comments, SocialLikeDao likes)
         : posts_(std::move(posts)), comments_(std::move(comments)),
@@ -28,12 +28,12 @@ public:
     drogon::Task<std::vector<PostView>> feed(std::int64_t user, std::int64_t page) const;
     drogon::Task<SearchResults> search(std::string query, const UserService& users) const;
     drogon::Task<std::optional<PostView>> view(std::int64_t viewer, std::int64_t post) const;
-    drogon::Task<std::optional<std::vector<PostView>>> userPosts(std::int64_t viewer, std::int64_t author,
+    drogon::Task<std::optional<std::vector<PostView>>> user_posts(std::int64_t viewer, std::int64_t author,
         std::int64_t page, const UserService& users) const;
     drogon::Task<PostView> post(std::int64_t user, std::string username, std::string text) const;
     drogon::Task<std::optional<std::vector<CommentView>>> thread(
         std::int64_t post, std::int64_t page, const UserService& users) const;
-    drogon::Task<std::optional<std::vector<CommentView>>> olderComments(
+    drogon::Task<std::optional<std::vector<CommentView>>> older_comments(
         std::int64_t post, CommentCursor before, const UserService& users) const;
     drogon::Task<std::optional<CommentView>> comment(std::int64_t post, std::int64_t user,
                                                      std::string username, std::string text) const;

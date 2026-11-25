@@ -1,20 +1,20 @@
-#include "app_namespace.hpp"
-#include "content_client.hpp"
+#include "app_namespace.h"
+#include "content_client.h"
 
 #include <cpr/cpr.h>
 #include <simdjson.h>
 
 namespace APP_NAMESPACE {
 
-std::expected<Content, ContentError> fetchContent(std::string_view url,
+std::expected<Content, ContentError> fetch_content(std::string_view url,
                                                  std::chrono::milliseconds timeout) {
-    constexpr std::size_t bodyLimit = 256 * 1024;
+    constexpr std::size_t body_limit = 256 * 1024;
     std::string body;
     const auto response = cpr::Get(
         cpr::Url{std::string(url)}, cpr::Timeout{timeout},
         cpr::Header{{"Accept", "application/json"}}, cpr::Redirect{false},
         cpr::WriteCallback{[&body](const std::string_view& chunk, intptr_t) {
-            if (chunk.size() > bodyLimit - body.size()) return false;
+            if (chunk.size() > body_limit - body.size()) return false;
             body.append(chunk);
             return true;
         }});

@@ -1,5 +1,5 @@
-#include "routes.hpp"
-#include "server/json_response.hpp"
+#include "routes.h"
+#include "server/json_response.h"
 
 #include <drogon/drogon.h>
 
@@ -7,10 +7,10 @@
 
 namespace APP_NAMESPACE {
 
-void registerDemoRoutes() {
+void register_demo_routes() {
     using namespace drogon;
     app().registerHandler("/status", [](HttpRequestPtr request) -> Task<HttpResponsePtr> {
-        co_return apiOk(*request, std::map<std::string, bool>{{"ok", true}});
+        co_return api_ok(*request, std::map<std::string, bool>{{"ok", true}});
     }, {Get});
 }
 

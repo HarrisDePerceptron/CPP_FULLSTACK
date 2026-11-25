@@ -1,6 +1,6 @@
 #pragma once
 
-#include "foreign_record.hpp"
+#include "foreign_record.h"
 
 #include <drogon/orm/Row.h>
 #include <drogon/orm/Field.h>
@@ -18,64 +18,64 @@ namespace APP_NAMESPACE {
 namespace detail {
 
 template <typename T>
-T readScalar(const drogon::orm::Field& field) {
+T read_scalar(const drogon::orm::Field& field) {
     if constexpr (std::is_scoped_enum_v<T>) {
         const auto label = field.as<std::string>();
         const auto value = magic_enum::enum_cast<T>(label);
         if (!value) throw std::runtime_error("unknown DAO enum label: " + label);
         return *value;
     } else if constexpr (std::same_as<T, DaoDateTime>) {
-        return parseDaoDateTime(field.as<std::string>());
+        return parse_dao_date_time(field.as<std::string>());
     } else {
         return field.as<T>();
     }
 }
 
 template <typename T>
-void readRowField(T& value, const drogon::orm::Field& field, const char* name) {
+void read_row_field(T& value, const drogon::orm::Field& field, const char* name) {
     if (field.isNull()) {
         throw std::runtime_error(std::string("NULL in required column: ") + name);
     }
-    value = readScalar<T>(field);
+    value = read_scalar<T>(field);
 }
 
 template <typename T>
-void readRowField(std::optional<T>& value, const drogon::orm::Field& field, const char*) {
+void read_row_field(std::optional<T>& value, const drogon::orm::Field& field, const char*) {
     if (field.isNull()) {
         value.reset();
     } else {
-        value = readScalar<T>(field);
+        value = read_scalar<T>(field);
     }
 }
 
 }
 
 template <glz::reflectable T>
-T rowToStruct(const drogon::orm::Row& row, std::span<const std::string> omitted = {}) {
+T row_to_struct(const drogon::orm::Row& row, std::span<const std::string> omitted = {}) {
     T result{};
     auto fields = glz::to_tie(result);
     constexpr auto names = glz::reflect<T>::keys;
-    auto readMember = [&]<std::size_t I>() {
-        const std::string name{names[I]};
-        auto& field = glz::get<I>(fields);
+    auto read_member = [&]<std::size_t index>() {
+        const std::string name{names[index]};
+        auto& field = glz::get<index>(fields);
         using Traits = detail::FieldTraits<std::remove_cvref_t<decltype(field)>>;
         if constexpr (detail::Nullable<typename Traits::Value>::nullable) {
             if (std::ranges::find(omitted, name) != omitted.end()) {
-                if constexpr (Traits::foreignKey().has_value()) Traits::setKey(field, std::nullopt);
+                if constexpr (Traits::foreign_key().has_value()) Traits::set_key(field, std::nullopt);
                 else Traits::unwrap(field).reset();
                 return;
             }
         }
-        if constexpr (Traits::foreignKey().has_value()) {
+        if constexpr (Traits::foreign_key().has_value()) {
             typename Traits::Value key{};
-            detail::readRowField(key, row.at(name), name.c_str());
-            Traits::setKey(field, std::move(key));
+            detail::read_row_field(key, row.at(name), name.c_str());
+            Traits::set_key(field, std::move(key));
         } else {
-            detail::readRowField(Traits::unwrap(field), row.at(name), name.c_str());
+            detail::read_row_field(Traits::unwrap(field), row.at(name), name.c_str());
         }
     };
-    [&]<std::size_t... I>(std::index_sequence<I...>) {
-        (readMember.template operator()<I>(), ...);
+    [&]<std::size_t... index>(std::index_sequence<index...>) {
+        (read_member.template operator()<index>(), ...);
     }(std::make_index_sequence<names.size()>{});
     return result;
 }

@@ -1,10 +1,10 @@
-#include "app_namespace.hpp"
-#include "server.hpp"
+#include "app_namespace.h"
+#include "server.h"
 
-#include "auth/jwt_middleware.hpp"
-#include "json_response.hpp"
-#include "routes/routes.hpp"
-#include "services.hpp"
+#include "auth/jwt_middleware.h"
+#include "json_response.h"
+#include "routes/routes.h"
+#include "services.h"
 
 #include <drogon/drogon.h>
 #include <sodium.h>
@@ -20,38 +20,38 @@ namespace {
 using namespace drogon;
 namespace fs = std::filesystem;
 
-constexpr std::size_t maxRequestBytes = maxUploadBytes + 64 * 1024;
-constexpr auto startAttribute = "app.requestStart";
+constexpr std::size_t max_request_bytes = max_upload_bytes + 64 * 1024;
+constexpr auto start_attribute = "app.requestStart";
 
-void configureLogging(const Config& config, const Logger& log) {
+void configure_logging(const Config& config, const Logger& log) {
     constexpr trantor::Logger::LogLevel levels[]{
         trantor::Logger::kInfo, trantor::Logger::kWarn, trantor::Logger::kError
     };
-    app().setLogLevel(levels[static_cast<int>(config.logLevel)]);
+    app().setLogLevel(levels[static_cast<int>(config.log_level)]);
     app().registerPreRoutingAdvice([](const HttpRequestPtr& request) {
-        request->attributes()->insert(startAttribute, std::chrono::steady_clock::now());
-        apiRequestId(*request);
+        request->attributes()->insert(start_attribute, std::chrono::steady_clock::now());
+        api_request_id(*request);
     });
     app().registerPreSendingAdvice([log](const HttpRequestPtr& request,
                                         const HttpResponsePtr& response) {
         using Clock = std::chrono::steady_clock;
-        const auto start = request->attributes()->get<Clock::time_point>(startAttribute);
+        const auto start = request->attributes()->get<Clock::time_point>(start_attribute);
         if (start == Clock::time_point{}) return;
         const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
             Clock::now() - start);
         auto route = request->matchedPathPattern();
         if (route.empty()) route = request->path().starts_with("/public/") ? "/public/*" : "(unmatched)";
-        log.write(LogLevel::info, "{} {} {} {} {}ms", apiRequestId(*request), request->methodString(), route,
+        log.write(LogLevel::info, "{} {} {} {} {}ms", api_request_id(*request), request->methodString(), route,
                   static_cast<int>(response->statusCode()), elapsed.count());
     });
     app().setExceptionHandler([log](const std::exception& error, const HttpRequestPtr& request,
                                    std::function<void(const HttpResponsePtr&)>&& reply) {
         if (dynamic_cast<const WorkersBusy*>(&error)) {
-            reply(apiError(*request, k503ServiceUnavailable, "SERVICE_UNAVAILABLE", "Server is busy. Try again shortly."));
+            reply(api_error(*request, k503ServiceUnavailable, "SERVICE_UNAVAILABLE", "Server is busy. Try again shortly."));
             return;
         }
         log.write(LogLevel::error, "Request failed in {}", request->matchedPathPattern());
-        reply(apiException(*request, error));
+        reply(api_exception(*request, error));
     });
 }
 
@@ -59,31 +59,31 @@ void configureLogging(const Config& config, const Logger& log) {
 
 int serve(const std::filesystem::path& root) {
     if (sodium_init() < 0) throw std::runtime_error("could not initialize libsodium");
-    loadEnvironment(root / ".env");
-    const auto config = readConfig(root / "config.json");
+    load_environment(root / ".env");
+    const auto config = read_config(root / "config.json");
     const auto state = root / ".local";
-    const auto publicPath = root / "public";
+    const auto public_path = root / "public";
     fs::create_directories(state / "empty");
-    fs::create_directories(publicPath / "uploads");
+    fs::create_directories(public_path / "uploads");
 
-    auto signingKey = loadSigningKey();
+    auto signing_key = load_signing_key();
     std::shared_ptr<Services> services;
     {
-        trantor::EventLoopThread startupThread;
-        startupThread.run();
+        trantor::EventLoopThread startup_thread;
+        startup_thread.run();
         const auto setup = [&]() -> Task<std::shared_ptr<Services>> {
-            co_await switchThreadCoro(startupThread.getLoop());
-            auto database = co_await openSqliteDatabase(state / "users.sqlite3");
+            co_await switchThreadCoro(startup_thread.getLoop());
+            auto database = co_await open_sqlite_database(state / "users.sqlite3");
             auto dao = co_await UserDao::init(database);
             auto posts = co_await SocialPostDao::init(database);
             auto comments = co_await SocialCommentDao::init(database);
             auto likes = co_await SocialLikeDao::init(database);
             SocialService social(std::move(posts), std::move(comments), std::move(likes));
-            auto initialized = std::make_shared<Services>(root, config, std::move(signingKey),
+            auto initialized = std::make_shared<Services>(root, config, std::move(signing_key),
                                                           UserService(std::move(dao)), std::move(social));
-            if (!config.testUser.empty()) {
-                co_await initialized->users.configureDemo(config.testUser, config.testPassword);
-            } else if (const auto credentials = co_await initialized->users.seedDemo()) {
+            if (!config.test_user.empty()) {
+                co_await initialized->users.configure_demo(config.test_user, config.test_password);
+            } else if (const auto credentials = co_await initialized->users.seed_demo()) {
                 std::println("Demo account created. Username: {} Password: {}", credentials->username,
                              credentials->password);
                 std::fflush(stdout);
@@ -94,25 +94,25 @@ int serve(const std::filesystem::path& root) {
     }
 
     auto& server = app();
-    server.addListener(config.bindAddress, static_cast<std::uint16_t>(config.port))
+    server.addListener(config.bind_address, static_cast<std::uint16_t>(config.port))
         .setDocumentRoot((state / "empty").string())
         .setUploadPath((state / "request-cache").string())
         .setImplicitPageEnable(false)
-        .setClientMaxBodySize(maxRequestBytes)
-        .setMaxConnectionNum(config.maxConnections)
+        .setClientMaxBodySize(max_request_bytes)
+        .setMaxConnectionNum(config.max_connections)
         .setFileTypes({"html", "css", "js", "png", "jpg", "jpeg", "gif", "webp", "pdf", "svg"})
-        .addALocation("/public/", "", publicPath.string(), true, false, false);
+        .addALocation("/public/", "", public_path.string(), true, false, false);
 
-    configureLogging(config, services->log);
-    const auto jwt = registerJwtMiddleware({services, &services->tokens});
-    registerDemoRoutes();
-    registerAuthRoutes(services, jwt);
-    registerSocialRoutes(services, jwt);
-    registerUploadRoutes(services, jwt);
-    registerContentRoutes(services);
+    configure_logging(config, services->log);
+    const auto jwt = register_jwt_middleware({services, &services->tokens});
+    register_demo_routes();
+    register_auth_routes(services, jwt);
+    register_social_routes(services, jwt);
+    register_upload_routes(services, jwt);
+    register_content_routes(services);
     server.setTermSignalHandler([services] { services->stopping.test_and_set(); })
         .setIntSignalHandler([services] { services->stopping.test_and_set(); });
-    server.registerBeginningAdvice([services, address = config.bindAddress, port = config.port] {
+    server.registerBeginningAdvice([services, address = config.bind_address, port = config.port] {
         services->log.write(LogLevel::info, "Listening on http://{}:{}", address, port);
         std::fflush(stdout);
         app().getLoop()->runEvery(0.1, [services] {

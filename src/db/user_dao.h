@@ -1,8 +1,8 @@
 #pragma once
 
-#include "app_namespace.hpp"
+#include "app_namespace.h"
 
-#include "base_dao.hpp"
+#include "base_dao.h"
 
 #include <filesystem>
 #include <optional>
@@ -31,21 +31,21 @@ class UserDao final : public BaseDao<UserDao, UserRecord> {
 public:
   static drogon::Task<UserDao> init(DatabaseBackendPtr database);
 
-  drogon::Task<std::optional<UserRecord>> findByUsername(std::string username) const &;
-  drogon::Task<std::optional<UserRecord>> findByUsername(std::string username) const && = delete;
+  drogon::Task<std::optional<UserRecord>> find_by_username(std::string username) const &;
+  drogon::Task<std::optional<UserRecord>> find_by_username(std::string username) const && = delete;
   drogon::Task<std::vector<UserMatch>> search(std::string query) const &;
   drogon::Task<std::vector<UserMatch>> search(std::string query) const && = delete;
-  drogon::Task<bool> hasDemo() const &;
-  drogon::Task<bool> hasDemo() const && = delete;
-  drogon::Task<bool> insertAccount(std::string username, std::string passwordHash) const &;
-  drogon::Task<bool> insertAccount(std::string username, std::string passwordHash) const && = delete;
-  drogon::Task<bool> insertDemo(std::string username,
+  drogon::Task<bool> has_demo() const &;
+  drogon::Task<bool> has_demo() const && = delete;
+  drogon::Task<bool> insert_account(std::string username, std::string password_hash) const &;
+  drogon::Task<bool> insert_account(std::string username, std::string password_hash) const && = delete;
+  drogon::Task<bool> insert_demo(std::string username,
                                 std::string password_hash) const &;
-  drogon::Task<bool> insertDemo(std::string username,
+  drogon::Task<bool> insert_demo(std::string username,
                                 std::string password_hash) const && = delete;
-  drogon::Task<> replaceDemo(std::string username,
+  drogon::Task<> replace_demo(std::string username,
                              std::string password_hash) const &;
-  drogon::Task<> replaceDemo(std::string username,
+  drogon::Task<> replace_demo(std::string username,
                              std::string password_hash) const && = delete;
 
 private:

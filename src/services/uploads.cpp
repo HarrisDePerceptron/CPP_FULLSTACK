@@ -1,6 +1,6 @@
-#include "app_namespace.hpp"
-#include "uploads.hpp"
-#include "utils/random.hpp"
+#include "app_namespace.h"
+#include "uploads.h"
+#include "utils/random.h"
 
 #include <unistd.h>
 
@@ -29,7 +29,7 @@ std::optional<UploadType> detect(std::string_view bytes) {
     return std::nullopt;
 }
 
-[[noreturn]] void writeError(const char* message) {
+[[noreturn]] void write_error(const char* message) {
     throw std::system_error(errno, std::generic_category(), message);
 }
 
@@ -38,7 +38,7 @@ public:
     explicit TemporaryUpload(const std::filesystem::path& directory)
         : path_((directory / ".pending-XXXXXX").string()) {
         descriptor_ = mkstemp(path_.data());
-        if (descriptor_ == -1) writeError("could not create temporary upload");
+        if (descriptor_ == -1) write_error("could not create temporary upload");
     }
 
     TemporaryUpload(const TemporaryUpload&) = delete;
@@ -49,22 +49,22 @@ public:
         unlink(path_.c_str());
     }
 
-    void writeAll(std::string_view data) {
+    void write_all(std::string_view data) {
         while (!data.empty()) {
             const auto count = write(descriptor_, data.data(), data.size());
             if (count < 0 && errno == EINTR) continue;
-            if (count < 0) writeError("could not write upload");
+            if (count < 0) write_error("could not write upload");
             if (count == 0) throw std::runtime_error("upload write made no progress");
             data.remove_prefix(static_cast<std::size_t>(count));
         }
         const int descriptor = std::exchange(descriptor_, -1);
-        if (close(descriptor) != 0) writeError("could not close upload");
+        if (close(descriptor) != 0) write_error("could not close upload");
     }
 
     bool publish(const std::filesystem::path& destination) const {
         if (link(path_.c_str(), destination.c_str()) == 0) return true;
         if (errno == EEXIST) return false;
-        writeError("could not publish upload");
+        write_error("could not publish upload");
     }
 
 private:
@@ -76,14 +76,14 @@ private:
 
 std::expected<std::string, UploadError> Uploads::save(std::string_view bytes) const {
     if (bytes.empty()) return std::unexpected(UploadError::empty);
-    if (bytes.size() > maxUploadBytes) return std::unexpected(UploadError::tooLarge);
+    if (bytes.size() > max_upload_bytes) return std::unexpected(UploadError::too_large);
     const auto type = detect(bytes);
     if (!type) return std::unexpected(UploadError::unsupported);
 
     TemporaryUpload temporary(directory_);
-    temporary.writeAll(bytes);
+    temporary.write_all(bytes);
     for (int attempt = 0; attempt < 3; ++attempt) {
-        const auto name = randomHex<16>() + "." + std::string(type->extension);
+        const auto name = random_hex<16>() + "." + std::string(type->extension);
         if (temporary.publish(directory_ / name)) return name;
     }
     throw std::runtime_error("could not allocate a unique upload name");

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "app_namespace.hpp"
+#include "app_namespace.h"
 
 #include <chrono>
 #include <cstdint>
@@ -18,7 +18,7 @@ struct Content {
 
 enum class ContentError { timeout, upstream };
 
-std::expected<Content, ContentError> fetchContent(
+std::expected<Content, ContentError> fetch_content(
     std::string_view url = "https://jsonplaceholder.typicode.com/todos/1",
     std::chrono::milliseconds timeout = std::chrono::seconds(5));
 

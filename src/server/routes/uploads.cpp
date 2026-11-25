@@ -1,7 +1,7 @@
-#include "app_namespace.hpp"
-#include "routes.hpp"
-#include "server/json_response.hpp"
-#include "server/services.hpp"
+#include "app_namespace.h"
+#include "routes.h"
+#include "server/json_response.h"
+#include "server/services.h"
 
 #include <drogon/drogon.h>
 
@@ -14,7 +14,7 @@ namespace {
 
 using namespace drogon;
 
-constexpr auto uploadPrefix = "/public/uploads/";
+constexpr auto upload_prefix = "/public/uploads/";
 
 Task<HttpResponsePtr> upload(std::shared_ptr<Services> services, HttpRequestPtr request) {
     const auto saved = co_await services->workers.submit([&]
@@ -30,16 +30,16 @@ Task<HttpResponsePtr> upload(std::shared_ptr<Services> services, HttpRequestPtr 
     if (!saved) {
         switch (saved.error()) {
             case UploadError::empty:
-                co_return apiError(*request, k400BadRequest, "VALIDATION_FAILED", "Choose one file to upload.");
-            case UploadError::tooLarge:
-                co_return apiError(*request, k413RequestEntityTooLarge, "PAYLOAD_TOO_LARGE", "The file exceeds 10 MiB.");
+                co_return api_error(*request, k400BadRequest, "VALIDATION_FAILED", "Choose one file to upload.");
+            case UploadError::too_large:
+                co_return api_error(*request, k413RequestEntityTooLarge, "PAYLOAD_TOO_LARGE", "The file exceeds 10 MiB.");
             case UploadError::unsupported:
-                co_return apiError(*request, k415UnsupportedMediaType, "UNSUPPORTED_MEDIA_TYPE", "Choose a PDF or a supported image.");
+                co_return api_error(*request, k415UnsupportedMediaType, "UNSUPPORTED_MEDIA_TYPE", "Choose a PDF or a supported image.");
         }
     }
 
-    const auto url = std::string(uploadPrefix) + *saved;
-    auto response = apiOk(*request, UploadResult{url}, k201Created);
+    const auto url = std::string(upload_prefix) + *saved;
+    auto response = api_ok(*request, UploadResult{url}, k201Created);
     response->addHeader("Location", url);
     co_return response;
 }
@@ -48,7 +48,7 @@ Task<HttpResponsePtr> download(std::shared_ptr<Services> services, HttpRequestPt
                                std::string name) {
     co_return co_await services->workers.submit([&] {
         const auto file = services->uploads.find(name);
-        if (!file) return apiError(*request, k404NotFound, "NOT_FOUND", "Upload not found.");
+        if (!file) return api_error(*request, k404NotFound, "NOT_FOUND", "Upload not found.");
         auto response = HttpResponse::newFileResponse(file->first.string(), name, CT_CUSTOM,
                                                       std::string(file->second.mime), request);
         response->addHeader("X-Content-Type-Options", "nosniff");
@@ -58,7 +58,7 @@ Task<HttpResponsePtr> download(std::shared_ptr<Services> services, HttpRequestPt
 
 }
 
-void registerUploadRoutes(const std::shared_ptr<Services>& services, const std::string& jwt) {
+void register_upload_routes(const std::shared_ptr<Services>& services, const std::string& jwt) {
     auto& server = app();
     server.registerHandler("/api/uploads", [services](HttpRequestPtr request) {
         return upload(services, std::move(request));

@@ -24,27 +24,29 @@ Listener settings resolve from the process environment, then `.env`, then `confi
 
 ## Coding Style
 
-Use four spaces and place opening braces on the declaration line. Use `.hpp` for C++ headers and `.cpp` for implementations. Keep route handlers small and delegate persistence and outbound calls to their modules. Always use `co_await` for asynchronous application code and `std::println` for console output, including logs. Use `apiOk` and `apiError` for typed API responses.
+Use four spaces and place opening braces on the declaration line. Use `.h` for C++ headers and `.cpp` for implementations. Keep route handlers small and delegate persistence and outbound calls to their modules. Always use `co_await` for asynchronous application code and `std::println` for console output, including logs. Use `api_ok` and `api_error` for typed API responses.
+
+Use snake_case for project-owned C++ functions, methods, variables, fields, constants, and enum values. Use PascalCase for types. Keep macro names and names required by third-party APIs in their existing spelling.
 
 Prefer values for direct ownership and references for required borrows. Use `std::optional<std::reference_wrapper<T>>` for optional borrows and smart pointers for explicit heap ownership. Avoid raw pointers in application interfaces. Adapt third-party APIs that require raw pointers at the integration boundary.
 
 ## Database and Service Layers
 
 - Define persistent fields in a snake_case aggregate with a static `table_name`. Wrap it in `DaoRecord<Fields>` and derive the entity DAO from `BaseDao<Derived, Record>`. Use field annotations for keys, constraints, indexes, defaults, and foreign references. See the [README database example](README.md#database-example).
-- Open the database backend once at startup and pass it to each DAO's async `init(database)`. Initialize parent DAOs before DAOs that reference them. Use the base DAO's coroutine CRUD methods and typed filters for ordinary queries. Keep custom SQL in the DAO, and bind runtime values through `executeSql`.
-- Build list queries with `dao.find()` or `dao.find(tx)` and execute them with `co_await … .collect()`. The default is 100 rows at offset 0. Set a different window with `.limit()` and `.offset()`. Use `.where<Member>(value)` for a typed filter, `.where(predicate)` for a composed predicate, and `.matching(filters)` for runtime `EqualityFilters`. Add projection, sorting, and foreign loading with `.select()`, `.selectAll()`, `.orderBy()`, and `.withForeign()`. List queries exclude soft-deleted rows unless you add `.includeDeleted()`.
-- Finish ID lookups and counts with `.collect()` too. Use `findById(id)` for an optional full record and `count()` for the total across all matching active rows. Pass a transaction as the first argument when needed. Both builders support `.includeDeleted()`.
-- Prefer named filters such as `.whereIn<Member>(ids)` and `.whereGte<Member>(value)` with `find()` and `count()`. Use `.where(predicate)` for reusable predicates, negation, and tuple cursors.
-- Use `updateById(id).set<Member>(value).execute()` for partial updates and `insertIfAbsent<Key>(record)` or `upsert<Key, Members...>(record)` for declared single-column conflict targets. Keep the DAO and any borrowed transaction alive until the awaited operation completes.
-- Use `createMany(records)` and `updateMany(records)` for atomic batches. Pass the existing transaction first to scope the batch to a savepoint. Create returns keys in input order. Update returns false and rolls back the batch if any target is missing or soft-deleted.
-- Use `deleteMany(ids)` for hard deletes and `softDeleteMany(ids)` for soft deletes. Both use the same batch transaction rules and return the number of rows changed.
+- Open the database backend once at startup and pass it to each DAO's async `init(database)`. Initialize parent DAOs before DAOs that reference them. Use the base DAO's coroutine CRUD methods and typed filters for ordinary queries. Keep custom SQL in the DAO, and bind runtime values through `execute_sql`.
+- Build list queries with `dao.find()` or `dao.find(tx)` and execute them with `co_await … .collect()`. The default is 100 rows at offset 0. Set a different window with `.limit()` and `.offset()`. Use `.where<Member>(value)` for a typed filter, `.where(predicate)` for a composed predicate, and `.matching(filters)` for runtime `EqualityFilters`. Add projection, sorting, and foreign loading with `.select()`, `.select_all()`, `.order_by()`, and `.with_foreign()`. List queries exclude soft-deleted rows unless you add `.include_deleted()`.
+- Finish ID lookups and counts with `.collect()` too. Use `find_by_id(id)` for an optional full record and `count()` for the total across all matching active rows. Pass a transaction as the first argument when needed. Both builders support `.include_deleted()`.
+- Prefer named filters such as `.where_in<Member>(ids)` and `.where_gte<Member>(value)` with `find()` and `count()`. Use `.where(predicate)` for reusable predicates, negation, and tuple cursors.
+- Use `update_by_id(id).set<Member>(value).execute()` for partial updates and `insert_if_absent<Key>(record)` or `upsert<Key, Members...>(record)` for declared single-column conflict targets. Keep the DAO and any borrowed transaction alive until the awaited operation completes.
+- Use `create_many(records)` and `update_many(records)` for atomic batches. Pass the existing transaction first to scope the batch to a savepoint. Create returns keys in input order. Update returns false and rolls back the batch if any target is missing or soft-deleted.
+- Use `delete_many(ids)` for hard deletes and `soft_delete_many(ids)` for soft deletes. Both use the same batch transaction rules and return the number of rows changed.
 - Give each service its initialized DAO by value and keep business logic in the service. Register services in the server's `Services` container. Route handlers should validate requests, `co_await` service methods, and build responses. Keep database queries and persistence records inside the service and DAO layers.
 
 ```cpp
 auto posts = co_await postDao.find()
     .where<&SocialPost::author_id>(userId)
     .select<&SocialPost::created_at>()
-    .orderBy<&SocialPost::created_at>(SortDirection::desc)
+    .order_by<&SocialPost::created_at>(SortDirection::desc)
     .limit(20)
     .collect();
 ```

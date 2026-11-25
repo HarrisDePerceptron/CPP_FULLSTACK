@@ -1,5 +1,5 @@
-#include "app_namespace.hpp"
-#include "tokens.hpp"
+#include "app_namespace.h"
+#include "tokens.h"
 
 #include <glaze/glaze.hpp>
 #include <glaze/json/generic.hpp>

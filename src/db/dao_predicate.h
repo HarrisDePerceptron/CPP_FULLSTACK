@@ -1,6 +1,6 @@
 #pragma once
 
-#include "schema_field.hpp"
+#include "schema_field.h"
 
 #include <glaze/reflection/get_name.hpp>
 
@@ -22,49 +22,49 @@ struct DaoMember<Value Owner::*> {
 
 enum class PredicateOp { eq, gt, gte, lt, lte, in, contains };
 
-template <PredicateOp Op, typename T>
+template <PredicateOp op, typename T>
 struct FilterOperand {
     T value;
 };
 
-template <auto Member>
+template <auto member>
 struct DaoPredicate {
-    using Record = typename DaoMember<decltype(Member)>::Record;
-    using Value = typename DaoMember<decltype(Member)>::Type;
-    static constexpr auto name = glz::get_name<Member>();
+    using Record = typename DaoMember<decltype(member)>::Record;
+    using Value = typename DaoMember<decltype(member)>::Type;
+    static constexpr auto name = glz::get_name<member>();
 
     PredicateOp operation;
     std::vector<Value> values;
     bool negated = false;
 };
 
-template <auto First, auto Second>
+template <auto first_member, auto second_member>
 struct DaoTupleLess {
-    using FirstValue = typename Nullable<typename DaoMember<decltype(First)>::Type>::Type;
-    using SecondValue = typename Nullable<typename DaoMember<decltype(Second)>::Type>::Type;
+    using FirstValue = typename Nullable<typename DaoMember<decltype(first_member)>::Type>::Type;
+    using SecondValue = typename Nullable<typename DaoMember<decltype(second_member)>::Type>::Type;
 
     FirstValue first;
     SecondValue second;
 };
 
-template <PredicateOp Op, typename T>
+template <PredicateOp op, typename T>
 auto operand(T&& value) {
     if constexpr (std::is_convertible_v<T, std::string_view> &&
                   !std::same_as<std::decay_t<T>, std::nullptr_t>) {
-        return FilterOperand<Op, std::string>{std::string(std::forward<T>(value))};
+        return FilterOperand<op, std::string>{std::string(std::forward<T>(value))};
     } else {
-        return FilterOperand<Op, std::decay_t<T>>{std::forward<T>(value)};
+        return FilterOperand<op, std::decay_t<T>>{std::forward<T>(value)};
     }
 }
 
-template <typename Value, PredicateOp Op, typename T>
-constexpr bool validOperand() {
+template <typename Value, PredicateOp op, typename T>
+constexpr bool valid_operand() {
     using Scalar = typename Nullable<Value>::Type;
-    if constexpr (Op == PredicateOp::contains) {
+    if constexpr (op == PredicateOp::contains) {
         return std::same_as<Scalar, std::string> && std::constructible_from<std::string, T>;
-    } else if constexpr (Op == PredicateOp::in) {
+    } else if constexpr (op == PredicateOp::in) {
         return std::constructible_from<Value, typename T::value_type>;
-    } else if constexpr (Op == PredicateOp::eq) {
+    } else if constexpr (op == PredicateOp::eq) {
         return std::constructible_from<Value, T>;
     } else {
         return (std::signed_integral<Scalar> || std::same_as<Scalar, double> ||
@@ -80,15 +80,15 @@ template <typename T> auto gte(T&& value) { return detail::operand<detail::Predi
 template <typename T> auto lt(T&& value) { return detail::operand<detail::PredicateOp::lt>(std::forward<T>(value)); }
 template <typename T> auto lte(T&& value) { return detail::operand<detail::PredicateOp::lte>(std::forward<T>(value)); }
 
-template <auto First, auto Second, typename FirstValue, typename SecondValue>
-    requires std::is_member_object_pointer_v<decltype(First)> &&
-             std::is_member_object_pointer_v<decltype(Second)> &&
-             (detail::validOperand<typename detail::DaoMember<decltype(First)>::Type,
+template <auto first_member, auto second_member, typename FirstValue, typename SecondValue>
+    requires std::is_member_object_pointer_v<decltype(first_member)> &&
+             std::is_member_object_pointer_v<decltype(second_member)> &&
+             (detail::valid_operand<typename detail::DaoMember<decltype(first_member)>::Type,
                                   detail::PredicateOp::lt, FirstValue>()) &&
-             (detail::validOperand<typename detail::DaoMember<decltype(Second)>::Type,
+             (detail::valid_operand<typename detail::DaoMember<decltype(second_member)>::Type,
                                   detail::PredicateOp::lt, SecondValue>())
-auto whereTupleLess(FirstValue&& first, SecondValue&& second) {
-    using Predicate = detail::DaoTupleLess<First, Second>;
+auto where_tuple_less(FirstValue&& first, SecondValue&& second) {
+    using Predicate = detail::DaoTupleLess<first_member, second_member>;
     return Predicate{typename Predicate::FirstValue(std::forward<FirstValue>(first)),
                      typename Predicate::SecondValue(std::forward<SecondValue>(second))};
 }
@@ -113,16 +113,16 @@ auto in(std::initializer_list<T> values) {
     return in(std::ranges::subrange(values.begin(), values.end()));
 }
 
-template <auto Member, detail::PredicateOp Op, typename T>
-    requires std::is_member_object_pointer_v<decltype(Member)> &&
-             (detail::validOperand<typename detail::DaoMember<decltype(Member)>::Type, Op, T>())
-auto where(detail::FilterOperand<Op, T> operand) {
-    using Predicate = detail::DaoPredicate<Member>;
+template <auto member, detail::PredicateOp op, typename T>
+    requires std::is_member_object_pointer_v<decltype(member)> &&
+             (detail::valid_operand<typename detail::DaoMember<decltype(member)>::Type, op, T>())
+auto where(detail::FilterOperand<op, T> operand) {
+    using Predicate = detail::DaoPredicate<member>;
     using Value = typename Predicate::Value;
-    Predicate predicate{Op, {}};
-    if constexpr (Op == detail::PredicateOp::in) {
+    Predicate predicate{op, {}};
+    if constexpr (op == detail::PredicateOp::in) {
         for (const auto& value : operand.value) predicate.values.emplace_back(value);
-    } else if constexpr (Op == detail::PredicateOp::eq || Op == detail::PredicateOp::contains) {
+    } else if constexpr (op == detail::PredicateOp::eq || op == detail::PredicateOp::contains) {
         predicate.values.emplace_back(std::move(operand.value));
     } else {
         using Scalar = typename detail::Nullable<Value>::Type;
@@ -131,15 +131,15 @@ auto where(detail::FilterOperand<Op, T> operand) {
     return predicate;
 }
 
-template <auto Member, typename Value>
-    requires std::is_member_object_pointer_v<decltype(Member)> &&
-             std::constructible_from<typename detail::DaoMember<decltype(Member)>::Type, Value>
+template <auto member, typename Value>
+    requires std::is_member_object_pointer_v<decltype(member)> &&
+             std::constructible_from<typename detail::DaoMember<decltype(member)>::Type, Value>
 auto where(Value&& value) {
-    return where<Member>(eq(std::forward<Value>(value)));
+    return where<member>(eq(std::forward<Value>(value)));
 }
 
-template <auto Member>
-auto negate(detail::DaoPredicate<Member> predicate) {
+template <auto member>
+auto negate(detail::DaoPredicate<member> predicate) {
     predicate.negated = !predicate.negated;
     return predicate;
 }

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "schema_field.hpp"
+#include "schema_field.h"
 
 #include <glaze/core/reflect.hpp>
 
@@ -12,13 +12,13 @@ namespace APP_NAMESPACE {
 
 namespace detail {
 
-template <typename Fields, std::size_t I>
+template <typename Fields, std::size_t index>
 using DaoFieldTraits = FieldTraits<std::remove_cvref_t<decltype(
-    glz::get<I>(glz::to_tie(std::declval<Fields&>())))>>;
+    glz::get<index>(glz::to_tie(std::declval<Fields&>())))>>;
 
-template <typename Fields, std::size_t I>
-constexpr auto primaryType() {
-    using Traits = DaoFieldTraits<Fields, I>;
+template <typename Fields, std::size_t index>
+constexpr auto primary_type() {
+    using Traits = DaoFieldTraits<Fields, index>;
     if constexpr (Traits::primary) {
         static_assert(!Nullable<typename Traits::Value>::nullable, "primary key cannot be nullable");
         return std::tuple{std::type_identity<typename Traits::Value>{}};
@@ -27,13 +27,13 @@ constexpr auto primaryType() {
     }
 }
 
-template <typename Fields, std::size_t... I>
-constexpr auto primaryTypes(std::index_sequence<I...>) {
-    return std::tuple_cat(primaryType<Fields, I>()...);
+template <typename Fields, std::size_t... index>
+constexpr auto primary_types(std::index_sequence<index...>) {
+    return std::tuple_cat(primary_type<Fields, index>()...);
 }
 
 template <typename Fields>
-using PrimaryTypes = decltype(primaryTypes<Fields>(
+using PrimaryTypes = decltype(primary_types<Fields>(
     std::make_index_sequence<glz::reflect<Fields>::keys.size()>{}));
 
 template <typename Fields>
@@ -41,7 +41,7 @@ struct DaoTimestamps {
     std::optional<DaoDateTime> created_at, updated_at;
 };
 
-template <typename Fields, bool Generated>
+template <typename Fields, bool generated>
 struct DaoGeneratedKey {};
 
 struct DaoDeletion {
@@ -61,15 +61,15 @@ struct DaoRecord : Fields, detail::DaoTimestamps<Fields>, detail::DaoDeletion,
     using FieldRecord = Fields;
     using Keys = detail::PrimaryTypes<Fields>;
     static_assert(std::tuple_size_v<Keys> <= 1, "only one primary field is supported");
-    static constexpr bool generatedId = std::tuple_size_v<Keys> == 0;
+    static constexpr bool generated_id = std::tuple_size_v<Keys> == 0;
 
     using Id = typename std::tuple_element_t<0, decltype(std::tuple_cat(
         Keys{}, std::tuple{std::type_identity<std::int64_t>{}}))>::type;
 
-    static constexpr std::string_view keyColumn = []<std::size_t... I>(std::index_sequence<I...>) {
+    static constexpr std::string_view key_column = []<std::size_t... index>(std::index_sequence<index...>) {
         std::string_view key = "id";
         constexpr auto names = glz::reflect<Fields>::keys;
-        ((detail::DaoFieldTraits<Fields, I>::primary ? void(key = names[I]) : void()), ...);
+        ((detail::DaoFieldTraits<Fields, index>::primary ? void(key = names[index]) : void()), ...);
         return key;
     }(std::make_index_sequence<glz::reflect<Fields>::keys.size()>{});
 
@@ -78,15 +78,15 @@ struct DaoRecord : Fields, detail::DaoTimestamps<Fields>, detail::DaoDeletion,
     DaoRecord(Fields fields, std::vector<std::string> omitted)
         : Fields(std::move(fields)), omitted_(std::move(omitted)) {}
 
-    bool isColumnLoaded(std::string_view name) const {
+    bool is_column_loaded(std::string_view name) const {
         return std::ranges::find(omitted_, name) == omitted_.end();
     }
 
-    template <auto Member>
-        requires std::is_member_object_pointer_v<decltype(Member)> &&
-                 requires(DaoRecord& record) { record.*Member; }
-    bool isLoaded() const {
-        return isColumnLoaded(glz::get_name<Member>());
+    template <auto member>
+        requires std::is_member_object_pointer_v<decltype(member)> &&
+                 requires(DaoRecord& record) { record.*member; }
+    bool is_loaded() const {
+        return is_column_loaded(glz::get_name<member>());
     }
 
 private:

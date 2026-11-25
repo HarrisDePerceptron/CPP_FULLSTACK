@@ -1,5 +1,5 @@
-#include "app_namespace.hpp"
-#include "config.hpp"
+#include "app_namespace.h"
+#include "config.h"
 
 #include <glaze/glaze.hpp>
 #include <laserpants/dotenv/dotenv.h>
@@ -31,7 +31,7 @@ struct Settings {
 namespace {
 
 template<class Number>
-Number positiveNumber(Number value, Number maximum, std::string_view name) {
+Number positive_number(Number value, Number maximum, std::string_view name) {
     if (value < 1 || value > maximum) {
         throw std::runtime_error(std::string(name) + " must be between 1 and " +
                                  std::to_string(maximum));
@@ -40,18 +40,18 @@ Number positiveNumber(Number value, Number maximum, std::string_view name) {
 }
 
 template<class Number>
-Number numberOverride(const char* name, Number value, Number maximum) {
+Number number_override(const char* name, Number value, Number maximum) {
     if (const char* configured = std::getenv(name)) {
         const std::string_view text(configured);
         const auto end = text.data() + text.size();
         const auto [ptr, error] = std::from_chars(text.data(), end, value);
         if (error != std::errc{} || ptr != end) value = 0;
-        return positiveNumber(value, maximum, name);
+        return positive_number(value, maximum, name);
     }
     return value;
 }
 
-void validateAddress(const std::string& address, std::string_view name) {
+void validate_address(const std::string& address, std::string_view name) {
     in_addr parsed{};
     if (address.find('\0') != std::string::npos ||
         inet_pton(AF_INET, address.c_str(), &parsed) != 1) {
@@ -59,7 +59,7 @@ void validateAddress(const std::string& address, std::string_view name) {
     }
 }
 
-LogLevel parseLogLevel(std::string_view level) {
+LogLevel parse_log_level(std::string_view level) {
     if (level == "info") return LogLevel::info;
     if (level == "warn") return LogLevel::warn;
     if (level == "error") return LogLevel::error;
@@ -68,7 +68,7 @@ LogLevel parseLogLevel(std::string_view level) {
 
 }
 
-Config readConfig(const std::filesystem::path& path) {
+Config read_config(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
     if (!input) throw std::runtime_error("could not open " + path.string());
 
@@ -78,37 +78,37 @@ Config readConfig(const std::filesystem::path& path) {
         glz::read_json(settings, json)) {
         throw std::runtime_error("invalid config.json fields or JSON syntax");
     }
-    constexpr auto maxConnections = std::numeric_limits<std::size_t>::max();
-    validateAddress(settings.bind_address, "config.json bind_address");
-    positiveNumber(settings.port, 65535, "config.json port");
-    positiveNumber(settings.max_connections, maxConnections, "config.json max_connections");
+    constexpr auto max_connections = std::numeric_limits<std::size_t>::max();
+    validate_address(settings.bind_address, "config.json bind_address");
+    positive_number(settings.port, 65535, "config.json port");
+    positive_number(settings.max_connections, max_connections, "config.json max_connections");
     if (settings.jwt_lifetime_seconds < 1 || settings.jwt_lifetime_seconds > 86400) {
         throw std::runtime_error("config.json jwt_lifetime_seconds must be between 1 and 86400");
     }
     if (const char* address = std::getenv("APP_BIND_ADDRESS")) {
         settings.bind_address = address;
-        validateAddress(settings.bind_address, "APP_BIND_ADDRESS");
+        validate_address(settings.bind_address, "APP_BIND_ADDRESS");
     }
     if (settings.test_user.empty() != settings.test_password.empty() ||
         settings.test_user.size() > 128 || settings.test_password.size() > 1024) {
         throw std::runtime_error("config.json test_user and test_password must be configured together "
                                  "and limited to 128 and 1024 bytes respectively");
     }
-    return {std::move(settings.bind_address), numberOverride("APP_PORT", settings.port, 65535),
-            numberOverride("APP_MAX_CONNECTIONS", settings.max_connections, maxConnections),
-            std::chrono::seconds(settings.jwt_lifetime_seconds), parseLogLevel(settings.log_level),
+    return {std::move(settings.bind_address), number_override("APP_PORT", settings.port, 65535),
+            number_override("APP_MAX_CONNECTIONS", settings.max_connections, max_connections),
+            std::chrono::seconds(settings.jwt_lifetime_seconds), parse_log_level(settings.log_level),
             std::move(settings.test_user), std::move(settings.test_password)};
 }
 
-void loadEnvironment(const std::filesystem::path& envPath) {
-    if (std::filesystem::exists(envPath)) {
-        std::ifstream input(envPath);
+void load_environment(const std::filesystem::path& env_path) {
+    if (std::filesystem::exists(env_path)) {
+        std::ifstream input(env_path);
         if (!input) throw std::runtime_error("could not open .env");
-        dotenv::init(dotenv::Preserve, envPath.c_str());
+        dotenv::init(dotenv::Preserve, env_path.c_str());
     }
 }
 
-std::string loadSigningKey() {
+std::string load_signing_key() {
     std::array<unsigned char, 32> key;
     if (const auto* configured = std::getenv("APP_JWT_SECRET")) {
         const std::string_view hex(configured);

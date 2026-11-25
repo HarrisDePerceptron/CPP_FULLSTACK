@@ -1,5 +1,5 @@
-#include "app_namespace.hpp"
-#include "services/content_client.hpp"
+#include "app_namespace.h"
+#include "services/content_client.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -63,16 +63,16 @@ private:
 #ifdef SO_NOSIGPIPE
         constexpr int enabled = 1;
         setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &enabled, sizeof(enabled));
-        constexpr int sendFlags = 0;
+        constexpr int send_flags = 0;
 #else
-        constexpr int sendFlags = MSG_NOSIGNAL;
+        constexpr int send_flags = MSG_NOSIGNAL;
 #endif
         pollfd readable{client, POLLIN, 0};
         std::array<char, 4096> buffer;
         if (poll(&readable, 1, 3000) > 0 && recv(client, buffer.data(), buffer.size(), 0) > 0) {
             std::this_thread::sleep_for(delay);
             while (!response.empty()) {
-                const auto sent = send(client, response.data(), response.size(), sendFlags);
+                const auto sent = send(client, response.data(), response.size(), send_flags);
                 if (sent <= 0) break;
                 response.remove_prefix(static_cast<std::size_t>(sent));
             }
@@ -87,7 +87,7 @@ private:
 
 TEST_CASE("CPR fetches local JSON and simdjson validates the content payload", "[content]") {
     const LocalResponse fixture("200 OK", R"({"id":1,"title":"Test todo","completed":false})");
-    const auto content = fetchContent(fixture.url());
+    const auto content = fetch_content(fixture.url());
     REQUIRE(content.has_value());
     CHECK(content->id == 1);
     CHECK(content->title == "Test todo");
@@ -97,19 +97,19 @@ TEST_CASE("CPR fetches local JSON and simdjson validates the content payload", "
 TEST_CASE("Upstream HTTP and JSON errors, oversized replies, and timeouts are handled", "[content]") {
     SECTION("HTTP error") {
         const LocalResponse fixture("503 Unavailable", "{}");
-        CHECK(fetchContent(fixture.url()).error() == ContentError::upstream);
+        CHECK(fetch_content(fixture.url()).error() == ContentError::upstream);
     }
     SECTION("Bad JSON or missing fields") {
         const LocalResponse fixture("200 OK", R"({"title":true})");
-        CHECK(fetchContent(fixture.url()).error() == ContentError::upstream);
+        CHECK(fetch_content(fixture.url()).error() == ContentError::upstream);
     }
     SECTION("Oversized response") {
         const LocalResponse fixture("200 OK", std::string(256 * 1024 + 1, 'x'));
-        CHECK(fetchContent(fixture.url()).error() == ContentError::upstream);
+        CHECK(fetch_content(fixture.url()).error() == ContentError::upstream);
     }
     SECTION("Timeout") {
         const LocalResponse fixture("200 OK", "{}", 200ms);
-        CHECK(fetchContent(fixture.url(), 50ms).error() == ContentError::timeout);
+        CHECK(fetch_content(fixture.url(), 50ms).error() == ContentError::timeout);
     }
 }
 }

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "server/json_response.hpp"
-#include "services/crud_service.hpp"
+#include "server/json_response.h"
+#include "services/crud_service.h"
 
 #include <drogon/HttpAppFramework.h>
 #include <drogon/orm/Exception.h>
@@ -21,7 +21,7 @@ struct CrudMethods {
 };
 
 template <std::integral Integer>
-Integer parseCrudInteger(std::string_view text) {
+Integer parse_crud_integer(std::string_view text) {
     if (text.empty()) throw CrudValidationError("Expected an integer.");
     Integer value{};
     const auto end = text.data() + text.size();
@@ -66,7 +66,7 @@ protected:
     virtual drogon::Task<Items> list(const Request& request, CrudPage page) const {
         typename Service::Filters filters;
         for (const auto& [name, value] : request.parameters()) {
-            if (name != "page" && name != "per_page") Policy::addFilter(filters, name, value);
+            if (name != "page" && name != "per_page") Policy::add_filter(filters, name, value);
         }
         return service_->list(page, std::move(filters));
     }
@@ -76,11 +76,11 @@ protected:
     }
 
     virtual drogon::Task<Response> create(const Request& request) const {
-        return service_->create(Policy::parseCreate(objectBody(request)));
+        return service_->create(Policy::parse_create(object_body(request)));
     }
 
     virtual drogon::Task<std::optional<Response>> patch(const Request& request, Id id) const {
-        return service_->patch(std::move(id), Policy::parsePatch(objectBody(request)));
+        return service_->patch(std::move(id), Policy::parse_patch(object_body(request)));
     }
 
     virtual drogon::Task<bool> remove(const Request&, Id id) const {
@@ -92,10 +92,10 @@ private:
         ApiPagination page{1, 20, false};
         const auto& params = request.parameters();
         if (const auto it = params.find("page"); it != params.end()) {
-            page.page = parseCrudInteger<std::int64_t>(it->second);
+            page.page = parse_crud_integer<std::int64_t>(it->second);
         }
         if (const auto it = params.find("per_page"); it != params.end()) {
-            page.per_page = parseCrudInteger<std::int64_t>(it->second);
+            page.per_page = parse_crud_integer<std::int64_t>(it->second);
         }
         if (page.page < 1 || page.per_page < 1 || page.per_page > 100 ||
             page.page - 1 > std::numeric_limits<std::int64_t>::max() / page.per_page) {
@@ -104,17 +104,17 @@ private:
         return page;
     }
 
-    static const Json::Value& objectBody(const Request& request) {
+    static const Json::Value& object_body(const Request& request) {
         const auto& body = request.getJsonObject();
         if (!body || !body->isObject()) throw CrudValidationError("Expected a JSON object.");
         return *body;
     }
 
-    static Id parseId(std::string_view value) {
-        if constexpr (requires { Policy::parseId(value); }) {
-            return Policy::parseId(value);
+    static Id parse_id(std::string_view value) {
+        if constexpr (requires { Policy::parse_id(value); }) {
+            return Policy::parse_id(value);
         } else if constexpr (std::integral<Id>) {
-            auto id = parseCrudInteger<Id>(value);
+            auto id = parse_crud_integer<Id>(value);
             if (id <= 0) throw CrudValidationError("Invalid resource ID.");
             return id;
         } else {
@@ -123,7 +123,7 @@ private:
         }
     }
 
-    drogon::HttpResponsePtr methodNotAllowed(const Request& request, bool item) const {
+    drogon::HttpResponsePtr method_not_allowed(const Request& request, bool item) const {
         using namespace drogon;
         std::string allow;
         const auto append = [&](bool enabled, std::string_view method) {
@@ -138,7 +138,7 @@ private:
         } else {
             append(methods_.create, "POST");
         }
-        auto response = apiError(request, k405MethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed.");
+        auto response = api_error(request, k405MethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed.");
         response->addHeader("Allow", std::move(allow));
         return response;
     }
@@ -155,25 +155,25 @@ private:
                     const auto limit = static_cast<std::size_t>(page.per_page);
                     page.has_more = items.size() > limit;
                     if (page.has_more) items.erase(items.begin() + limit, items.end());
-                    co_return apiOk(*request, std::move(items), page);
+                    co_return api_ok(*request, std::move(items), page);
                 }
-                if (method == Post && methods_.create) co_return apiOk(*request, co_await create(*request), k201Created);
-                co_return methodNotAllowed(*request, false);
+                if (method == Post && methods_.create) co_return api_ok(*request, co_await create(*request), k201Created);
+                co_return method_not_allowed(*request, false);
             }
             if (method == Get && methods_.get) {
-                auto item = co_await get(*request, parseId(*id));
-                if (item) co_return apiOk(*request, std::move(*item));
+                auto item = co_await get(*request, parse_id(*id));
+                if (item) co_return api_ok(*request, std::move(*item));
             } else if (method == Patch && methods_.patch) {
-                auto item = co_await patch(*request, parseId(*id));
-                if (item) co_return apiOk(*request, std::move(*item));
+                auto item = co_await patch(*request, parse_id(*id));
+                if (item) co_return api_ok(*request, std::move(*item));
             } else if (method == Delete && methods_.remove) {
-                if (co_await remove(*request, parseId(*id))) co_return apiOk(*request);
+                if (co_await remove(*request, parse_id(*id))) co_return api_ok(*request);
             } else {
-                co_return methodNotAllowed(*request, true);
+                co_return method_not_allowed(*request, true);
             }
-            co_return apiError(*request, k404NotFound, "NOT_FOUND", "Resource not found.");
+            co_return api_error(*request, k404NotFound, "NOT_FOUND", "Resource not found.");
         } catch (const std::exception& error) {
-            co_return apiException(*request, error);
+            co_return api_exception(*request, error);
         }
     }
 

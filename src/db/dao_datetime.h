@@ -1,6 +1,6 @@
 #pragma once
 
-#include "app_namespace.hpp"
+#include "app_namespace.h"
 
 #include <chrono>
 #include <stdexcept>
@@ -13,7 +13,7 @@ using DaoDateTime = std::chrono::sys_time<std::chrono::milliseconds>;
 
 namespace detail {
 
-constexpr DaoDateTime parseDaoDateTime(std::string_view text) {
+constexpr DaoDateTime parse_dao_date_time(std::string_view text) {
     using namespace std::chrono;
     constexpr auto invalid = "invalid DAO UTC datetime";
     if (text.size() != 24 || text[4] != '-' || text[7] != '-' || text[10] != 'T' ||
@@ -38,7 +38,7 @@ constexpr DaoDateTime parseDaoDateTime(std::string_view text) {
     return sys_days{date} + hours{hour} + minutes{minute} + seconds{second} + milliseconds{number(20, 3)};
 }
 
-std::string formatDaoDateTime(DaoDateTime value);
+std::string format_dao_date_time(DaoDateTime value);
 
 }
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "app_namespace.hpp"
+#include "app_namespace.h"
 
 #include <sodium.h>
 
@@ -10,7 +10,7 @@
 namespace APP_NAMESPACE {
 
 template<std::size_t Bytes>
-std::string randomHex() {
+std::string random_hex() {
     std::array<unsigned char, Bytes> bytes;
     std::array<char, Bytes * 2 + 1> hex;
     randombytes_buf(bytes.data(), bytes.size());

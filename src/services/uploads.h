@@ -1,6 +1,6 @@
 #pragma once
 
-#include "app_namespace.hpp"
+#include "app_namespace.h"
 
 #include <cstddef>
 #include <expected>
@@ -12,8 +12,8 @@
 
 namespace APP_NAMESPACE {
 
-inline constexpr std::size_t maxUploadBytes = 10 * 1024 * 1024;
-enum class UploadError { empty, tooLarge, unsupported };
+inline constexpr std::size_t max_upload_bytes = 10 * 1024 * 1024;
+enum class UploadError { empty, too_large, unsupported };
 
 struct UploadType {
     std::string_view extension;

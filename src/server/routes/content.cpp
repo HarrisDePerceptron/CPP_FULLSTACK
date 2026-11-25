@@ -1,8 +1,8 @@
-#include "app_namespace.hpp"
-#include "routes.hpp"
-#include "server/json_response.hpp"
-#include "server/services.hpp"
-#include "services/content_client.hpp"
+#include "app_namespace.h"
+#include "routes.h"
+#include "server/json_response.h"
+#include "server/services.h"
+#include "services/content_client.h"
 
 #include <drogon/drogon.h>
 
@@ -12,20 +12,20 @@ namespace {
 using namespace drogon;
 
 Task<HttpResponsePtr> content(std::shared_ptr<Services> services, HttpRequestPtr request) {
-    const auto result = co_await services->workers.submit([] { return fetchContent(); });
-    if (result) co_return apiOk(*request, *result);
+    const auto result = co_await services->workers.submit([] { return fetch_content(); });
+    if (result) co_return api_ok(*request, *result);
 
     if (result.error() == ContentError::timeout) {
         services->log.write(LogLevel::warn, "Content provider timed out");
-        co_return apiError(*request, k504GatewayTimeout, "GATEWAY_TIMEOUT", "The content provider timed out.");
+        co_return api_error(*request, k504GatewayTimeout, "GATEWAY_TIMEOUT", "The content provider timed out.");
     }
     services->log.write(LogLevel::warn, "Content provider returned an unusable response");
-    co_return apiError(*request, k502BadGateway, "BAD_GATEWAY", "Could not fetch content from the provider.");
+    co_return api_error(*request, k502BadGateway, "BAD_GATEWAY", "Could not fetch content from the provider.");
 }
 
 }
 
-void registerContentRoutes(const std::shared_ptr<Services>& services) {
+void register_content_routes(const std::shared_ptr<Services>& services) {
     auto& server = app();
     server.registerHandler("/api/content", [services](HttpRequestPtr request) {
         return content(services, std::move(request));

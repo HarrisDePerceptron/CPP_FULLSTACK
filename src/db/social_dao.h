@@ -1,6 +1,6 @@
 #pragma once
 
-#include "user_dao.hpp"
+#include "user_dao.h"
 
 namespace APP_NAMESPACE {
 
@@ -68,7 +68,7 @@ public:
     drogon::Task<std::vector<PostMatch>> search(std::string query) const &;
     drogon::Task<std::vector<PostMatch>> search(std::string query) const && = delete;
 private:
-    drogon::Task<std::vector<PostView>> readViews(std::int64_t user, std::int64_t limit,
+    drogon::Task<std::vector<PostView>> read_views(std::int64_t user, std::int64_t limit,
         std::int64_t offset, std::string filter, std::int64_t key) const;
     using BaseDao::BaseDao;
 };
@@ -81,10 +81,10 @@ public:
     drogon::Task<std::vector<CommentView>> thread(std::int64_t post, std::int64_t limit,
                                                  std::int64_t offset, const UserDao& users) const && = delete;
     drogon::Task<std::vector<CommentView>> older(
-        std::int64_t post, DaoDateTime beforeTime, std::int64_t beforeId,
+        std::int64_t post, DaoDateTime before_time, std::int64_t before_id,
         std::int64_t limit, const UserDao& users) const &;
     drogon::Task<std::vector<CommentView>> older(
-        std::int64_t post, DaoDateTime beforeTime, std::int64_t beforeId,
+        std::int64_t post, DaoDateTime before_time, std::int64_t before_id,
         std::int64_t limit, const UserDao& users) const && = delete;
 private:
     using BaseDao::BaseDao;
