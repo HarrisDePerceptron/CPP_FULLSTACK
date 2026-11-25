@@ -1,7 +1,8 @@
 #include "app_namespace.h"
-#include "services/content_client.h"
+#include "app/services/content_client.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <trantor/net/EventLoopThread.h>
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -51,7 +52,7 @@ public:
         close(listener_);
     }
 
-    std::string url() const { return "http://127.0.0.1:" + std::to_string(port_) + "/todo"; }
+    std::string origin() const { return "http://127.0.0.1:" + std::to_string(port_); }
 
 private:
     void reply(std::string_view response, std::chrono::milliseconds delay) const {
@@ -85,9 +86,20 @@ private:
     std::thread thread_;
 };
 
-TEST_CASE("CPR fetches local JSON and simdjson validates the content payload", "[content]") {
+std::expected<Content, ContentError> fetch_local_content(
+    const LocalResponse& fixture, std::chrono::milliseconds timeout = 5s) {
+    trantor::EventLoopThread thread;
+    thread.run();
+    const auto run = [&]() -> drogon::Task<std::expected<Content, ContentError>> {
+        co_await drogon::switchThreadCoro(thread.getLoop());
+        co_return co_await fetch_content(fixture.origin(), "/todo", timeout);
+    };
+    return drogon::sync_wait(run());
+}
+
+TEST_CASE("The content client fetches and validates JSON over HTTP", "[content]") {
     const LocalResponse fixture("200 OK", R"({"id":1,"title":"Test todo","completed":false})");
-    const auto content = fetch_content(fixture.url());
+    const auto content = fetch_local_content(fixture);
     REQUIRE(content.has_value());
     CHECK(content->id == 1);
     CHECK(content->title == "Test todo");
@@ -97,19 +109,19 @@ TEST_CASE("CPR fetches local JSON and simdjson validates the content payload", "
 TEST_CASE("Upstream HTTP and JSON errors, oversized replies, and timeouts are handled", "[content]") {
     SECTION("HTTP error") {
         const LocalResponse fixture("503 Unavailable", "{}");
-        CHECK(fetch_content(fixture.url()).error() == ContentError::upstream);
+        CHECK(fetch_local_content(fixture).error() == ContentError::upstream);
     }
     SECTION("Bad JSON or missing fields") {
         const LocalResponse fixture("200 OK", R"({"title":true})");
-        CHECK(fetch_content(fixture.url()).error() == ContentError::upstream);
+        CHECK(fetch_local_content(fixture).error() == ContentError::upstream);
     }
     SECTION("Oversized response") {
         const LocalResponse fixture("200 OK", std::string(256 * 1024 + 1, 'x'));
-        CHECK(fetch_content(fixture.url()).error() == ContentError::upstream);
+        CHECK(fetch_local_content(fixture).error() == ContentError::upstream);
     }
     SECTION("Timeout") {
         const LocalResponse fixture("200 OK", "{}", 200ms);
-        CHECK(fetch_content(fixture.url(), 50ms).error() == ContentError::timeout);
+        CHECK(fetch_local_content(fixture, 50ms).error() == ContentError::timeout);
     }
 }
 }

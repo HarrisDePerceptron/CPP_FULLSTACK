@@ -1,6 +1,6 @@
-#include "services/social_service.h"
-#include "services/user_service.h"
-#include "utils/request_validation.h"
+#include "app/services/social_service.h"
+#include "app/services/user_service.h"
+#include "framework/http/request_validation.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <sodium.h>

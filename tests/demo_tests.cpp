@@ -1,12 +1,12 @@
 #include "app_namespace.h"
 
 #include <glaze/chrono.hpp>
-#include "db/row_to_struct.h"
-#include "utils/config.h"
-#include "server/json_response.h"
-#include "server/auth/tokens.h"
-#include "services/uploads.h"
-#include "services/user_service.h"
+#include "framework/db/row_to_struct.h"
+#include "app/server/config.h"
+#include "framework/http/json_response.h"
+#include "framework/auth/tokens.h"
+#include "framework/storage/uploads.h"
+#include "app/services/user_service.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers.hpp>

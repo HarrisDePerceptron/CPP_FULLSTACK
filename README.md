@@ -38,12 +38,22 @@ xmake test
 
 | Path | Contents |
 | --- | --- |
-| `src/server/` | Drogon startup, feature routes, authentication middleware, and JSON responses |
-| `src/services/`, `src/db/` | Account logic, upload storage, upstream HTTP calls, and SQLite persistence |
-| `src/utils/` | Configuration, logging, random IDs, and worker queue |
+| `src/framework/` | Reusable database, CRUD, HTTP, JWT, upload storage, logging, and worker code |
+| `src/main.cpp` | Application entry point |
+| `src/app/` | Demo application organized into server, services, DAO, and model layers |
 | `views/` | Drogon CSP templates compiled by Xmake |
 | `public/` | Browser JavaScript, Tailwind source and generated CSS, and runtime uploads |
 | `tests/` | Catch2 tests |
+
+`template_core` builds the reusable static library. `app_core` builds the demo
+features and links to it. Run `xmake build template_core` to build the shared
+library on its own.
+
+To add a feature, put its HTTP handlers in `src/app/server/routes/`, business
+logic in `src/app/services/`, and persistence in `src/app/dao/`. Put persisted
+records and DTOs in separate headers under `src/app/models/`. Use the public
+framework headers for persistence, CRUD, or HTTP responses. Wire the feature
+into the service container and route registration in `src/app/server/`.
 
 ## Database example
 
@@ -54,7 +64,7 @@ The database layer opens one shared SQLite backend through Drogon. Each DAO maps
 Use a fields struct with a `table_name`, wrap it in `DaoRecord`, and derive a DAO from `BaseDao`. Field names become column names. `DaoRecord` supplies a generated integer ID unless a field declares `Primary<T>`. Timestamps are enabled by default. Each DAO can opt out by passing `DaoOptions{.timestamps = false}` as the third template argument to `BaseDao`.
 
 ```cpp
-#include "db/base_dao.h"
+#include "framework/db/base_dao.h"
 
 #include <print>
 #include <string>
@@ -199,7 +209,7 @@ case-sensitive text. Pass a reusable or negated predicate to `.where(predicate)`
 For a many-to-many table, use `CompositeUnique` to prevent duplicates without replacing the generated ID.
 
 ```cpp
-#include "db/user_dao.h"
+#include "app/dao/user_dao.h"
 
 namespace APP_NAMESPACE {
 
@@ -276,16 +286,16 @@ Edit [config.json](config.json) to change the listener or demo credentials. The 
 
 ## Main dependencies
 
-- **Drogon** for HTTP routing and server-rendered views
+- **Drogon** for HTTP routing, async outbound requests, and server-rendered views
 - **SQLite, libsodium, and jwt-cpp** for account storage, password hashing, and signed sessions
-- **CPR, simdjson, and Glaze** for outbound HTTP and JSON handling
+- **simdjson and Glaze** for JSON handling
 - **dotenv-cpp** for loading `.env`
 - **Tailwind CSS** for styling and **Catch2** for tests
 
 ## Development rules
 
 - Keep `.h` files beside their `.cpp` implementations. Use four spaces and put opening braces on the declaration line.
-- Use snake_case for project-owned C++ functions, methods, variables, fields, constants, and enum values. Use PascalCase for types.
+- Use `snake_case` for project-owned C++ functions, methods, variables, fields, constants, and enum values. Use `PascalCase` for types. Keep macro names, third-party API names, and existing JSON, configuration, and database names stable.
 - Keep route handlers small. Delegate persistence and outbound calls, use `co_await` for asynchronous work, `api_ok` and `api_error` for typed JSON replies, and `std::println` for console output.
 - After editing a view or Tailwind source, run `npm ci` and `npm run build:css` with Node.js installed. Include the regenerated `public/demo.css` in the change.
 - Keep `.env`, local databases, and runtime uploads out of commits. See [AGENTS.md](AGENTS.md) for the full repository guidelines.

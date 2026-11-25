@@ -1,8 +1,8 @@
-#include "db/base_dao.h"
-#include "server/routes/crud_router.h"
+#include "framework/db/base_dao.h"
+#include "framework/crud/crud_router.h"
 
 #include <catch2/catch_test_macros.hpp>
-#include <cpr/cpr.h>
+#include <drogon/HttpClient.h>
 #include <drogon/drogon.h>
 #include <future>
 #include <sys/socket.h>
@@ -131,11 +131,12 @@ unsigned short free_port() {
     return ntohs(address.sin_port);
 }
 
-Json::Value check_reply(const cpr::Response& response, int status, ApiPagination pagination = {}) {
-    REQUIRE(response.status_code == status);
-    Json::Value json;
-    Json::Reader reader;
-    REQUIRE(reader.parse(response.text, json));
+Json::Value check_reply(const drogon::HttpResponsePtr& response, int status,
+                        ApiPagination pagination = {}) {
+    REQUIRE(response->statusCode() == status);
+    const auto parsed = response->getJsonObject();
+    REQUIRE(parsed);
+    const auto& json = *parsed;
     REQUIRE(json.getMemberNames().size() == 3);
     CHECK(json["success"].asBool() == (status < 400));
     const auto& meta = json["meta"];
@@ -143,7 +144,7 @@ Json::Value check_reply(const cpr::Response& response, int status, ApiPagination
     REQUIRE(timestamp.size() == 20);
     CHECK(timestamp.ends_with("Z"));
     CHECK(meta["request_id"].asString().starts_with("req_"));
-    CHECK(response.header.at("X-Request-ID") == meta["request_id"].asString());
+    CHECK(response->getHeader("X-Request-ID") == meta["request_id"].asString());
     if (status >= 400) {
         CHECK_FALSE(json.isMember("data"));
         CHECK_FALSE(meta.isMember("pagination"));
@@ -200,33 +201,48 @@ private:
 
 class CrudClient {
 public:
-    explicit CrudClient(const std::string& prefix) : base_(server().base_url() + prefix) {}
+    explicit CrudClient(std::string prefix)
+        : prefix_(std::move(prefix)), client_(drogon::HttpClient::newHttpClient(server().base_url())) {}
 
-    cpr::Response get(const std::string& path) const {
-        return cpr::Get(cpr::Url{base_ + path}, timeout_);
+    drogon::HttpResponsePtr get(const std::string& path) const {
+        return send(drogon::Get, path);
     }
 
-    cpr::Response post(const std::string& path, const std::string& body) const {
-        return cpr::Post(cpr::Url{base_ + path}, json_header_, cpr::Body{body}, timeout_);
+    drogon::HttpResponsePtr post(const std::string& path, const std::string& body) const {
+        return send(drogon::Post, path, body);
     }
 
-    cpr::Response patch(const std::string& path, const std::string& body) const {
-        return cpr::Patch(cpr::Url{base_ + path}, json_header_, cpr::Body{body}, timeout_);
+    drogon::HttpResponsePtr patch(const std::string& path, const std::string& body) const {
+        return send(drogon::Patch, path, body);
     }
 
-    cpr::Response remove(const std::string& path) const {
-        return cpr::Delete(cpr::Url{base_ + path}, timeout_);
+    drogon::HttpResponsePtr remove(const std::string& path) const {
+        return send(drogon::Delete, path);
     }
 
 private:
+    drogon::HttpResponsePtr send(drogon::HttpMethod method, const std::string& path,
+                                 const std::string& body = {}) const {
+        const auto request = drogon::HttpRequest::newHttpRequest();
+        request->setMethod(method);
+        request->setPath(prefix_ + path);
+        request->setPathEncode(false);
+        if (method == drogon::Post || method == drogon::Patch) {
+            request->setContentTypeCode(drogon::CT_APPLICATION_JSON);
+            request->setBody(body);
+        }
+        auto [result, response] = client_->sendRequest(request, 2);
+        REQUIRE(result == drogon::ReqResult::Ok);
+        return response;
+    }
+
     static const CrudServer& server() {
         static const CrudServer fixture;
         return fixture;
     }
 
-    std::string base_;
-    const cpr::Timeout timeout_{2000};
-    const cpr::Header json_header_{{"Content-Type", "application/json"}};
+    std::string prefix_;
+    drogon::HttpClientPtr client_;
 };
 
 std::string create_widget(const CrudClient& client) {
@@ -295,11 +311,11 @@ TEST_CASE("CRUD routes handle empty results, explicit null and disabled methods"
 
     const auto disabled_post = client.post("/readonly", "{}");
     check_reply(disabled_post, 405);
-    CHECK(disabled_post.header.at("allow") == "GET");
+    CHECK(disabled_post->getHeader("allow") == "GET");
 
     const auto disabled_patch = client.patch("/readonly" + path.substr(path.rfind('/')), "{}");
     check_reply(disabled_patch, 405);
-    CHECK(disabled_patch.header.at("allow") == "GET");
+    CHECK(disabled_patch->getHeader("allow") == "GET");
 
     check_reply(client.remove(path), 200);
     check_reply(client.patch(path, "{}"), 404);

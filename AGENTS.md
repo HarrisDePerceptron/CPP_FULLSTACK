@@ -2,8 +2,10 @@
 
 ## Project Structure
 
-- `src/main.cpp` starts the Drogon server. `src/server/` contains startup and JSON responses, with feature routes in `src/server/routes/` and JWT handling in `src/server/auth/`.
-- `src/services/` handles account logic, uploads, and upstream content. `src/db/` owns SQLite persistence. `src/utils/` contains configuration, logging, random ID generation, and the worker queue.
+- `src/main.cpp` starts the Drogon server. Put startup, configuration, and service wiring in `src/app/server/` and HTTP handlers in its `routes/` subdirectory.
+- Keep business rules, transaction orchestration, and upstream clients in `src/app/services/`. Keep domain DAOs and SQL in `src/app/dao/`. Put persisted records and DTOs in separate model headers under `src/app/models/`.
+- `src/framework/` holds reusable database, CRUD, HTTP, JWT, storage, and support code. The `template_core` target builds this layer independently. Framework code must not include app headers.
+- Include `framework/db/base_dao.h` to define a DAO. Its implementation headers are private to the framework.
 - Keep each C++ header beside its implementation and use paths relative to `src/` when including headers from another directory.
 - `views/` holds Drogon CSP templates compiled by Xmake. `public/` holds JavaScript, Tailwind source (`tailwind.css`), generated stylesheet (`demo.css`), and runtime uploads. `tests/` contains the Catch2 suite.
 - Xmake writes compiled output to `build/` and keeps local build configuration in `.xmake/`.
@@ -15,6 +17,7 @@ Run commands from the project root with Xmake and a C++26 compiler and standard 
 - `xmake f -m debug` or `xmake f -m release` selects the build mode.
 - Set a custom C++ namespace with `xmake f --app_namespace=MyApp`. The default is `App`.
 - `xmake` resolves dependencies and builds the server. First-time dependency resolution requires network access or a populated Xmake cache.
+- `xmake build template_core` builds the shared library by itself.
 - `xmake run app_server` starts the server at `http://127.0.0.1:8080` with the default `config.json`. The shipped config sets the local demo credentials with `test_user` and `test_password`. When both are omitted, the server generates demo credentials on first launch and prints them. Startup applies configured credentials to the demo account in `.local/`. Use the shipped credentials only for local testing.
 - After editing the page or Tailwind source, run `npm ci` and `npm run build:css`. Commit the regenerated `public/demo.css`.
 
@@ -26,7 +29,7 @@ Listener settings resolve from the process environment, then `.env`, then `confi
 
 Use four spaces and place opening braces on the declaration line. Use `.h` for C++ headers and `.cpp` for implementations. Keep route handlers small and delegate persistence and outbound calls to their modules. Always use `co_await` for asynchronous application code and `std::println` for console output, including logs. Use `api_ok` and `api_error` for typed API responses.
 
-Use snake_case for project-owned C++ functions, methods, variables, fields, constants, and enum values. Use PascalCase for types. Keep macro names and names required by third-party APIs in their existing spelling.
+Use `snake_case` for project-owned C++ functions, methods, variables, fields, constants, and enum values. Use `PascalCase` for types. Keep macro names and names required by third-party APIs in their existing spelling. Preserve existing JSON keys, configuration keys, and stored database names when renaming C++ identifiers.
 
 Prefer values for direct ownership and references for required borrows. Use `std::optional<std::reference_wrapper<T>>` for optional borrows and smart pointers for explicit heap ownership. Avoid raw pointers in application interfaces. Adapt third-party APIs that require raw pointers at the integration boundary.
 
@@ -43,8 +46,8 @@ Prefer values for direct ownership and references for required borrows. Use `std
 - Give each service its initialized DAO by value and keep business logic in the service. Register services in the server's `Services` container. Route handlers should validate requests, `co_await` service methods, and build responses. Keep database queries and persistence records inside the service and DAO layers.
 
 ```cpp
-auto posts = co_await postDao.find()
-    .where<&SocialPost::author_id>(userId)
+auto posts = co_await post_dao.find()
+    .where<&SocialPost::author_id>(user_id)
     .select<&SocialPost::created_at>()
     .order_by<&SocialPost::created_at>(SortDirection::desc)
     .limit(20)

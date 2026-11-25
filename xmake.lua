@@ -23,12 +23,6 @@ if is_host("macosx") then
 end
 
 add_requires("drogon v1.9.12", { configs = { cpp20 = true, sqlite3 = true } })
-add_requires("cpr 1.12.0")
-if is_plat("macosx") then
-	-- Keep libcurl's OpenSSL 3 inside its shared library so Trantor can link OpenSSL 1.1.
-	add_requireconfs("cpr.libcurl", { configs = { shared = true } })
-	add_requireconfs("cpr.libcurl.openssl3", { private = true })
-end
 add_requires("dotenv-cpp 9275210b8abf1a551fb81e0ba45866286d764acd", "glaze v7.0.2", "jwt-cpp 0.7.2")
 add_requires("magic_enum v0.9.8")
 add_requires("simdjson", "libsodium", "catch2 3.x")
@@ -39,7 +33,7 @@ set_showmenu(true)
 set_description("C++ namespace for the application")
 option_end()
 
-target("app_core")
+target("template_core")
 on_config(function(target)
 	local name = get_config("app_namespace")
 	assert(
@@ -54,19 +48,22 @@ end)
 set_kind("static")
 add_options("app_namespace")
 add_defines("APP_NAMESPACE=$(app_namespace)", { public = true })
-add_files("src/**.cpp|main.cpp")
+add_files("src/framework/**.cpp")
 add_includedirs("src", { public = true })
 add_packages(
 	"drogon",
-	"cpr",
-	"dotenv-cpp",
 	"glaze",
 	"jwt-cpp",
-	"simdjson",
 	"libsodium",
 	"magic_enum",
 	{ public = true }
 )
+
+target("app_core")
+set_kind("static")
+add_files("src/app/**.cpp")
+add_deps("template_core", { public = true })
+add_packages("dotenv-cpp", "simdjson", { public = true })
 
 rule("drogon.view")
 set_extensions(".csp")
