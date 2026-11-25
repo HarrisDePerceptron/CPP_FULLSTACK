@@ -29,6 +29,7 @@ public:
   drogon::Task<std::optional<UserRecord>>
   findByUsername(std::string username) const;
   drogon::Task<bool> hasDemo() const;
+  drogon::Task<bool> insertAccount(std::string username, std::string passwordHash) const;
   drogon::Task<bool> insertDemo(std::string username,
                                 std::string password_hash) const;
   drogon::Task<> replaceDemo(std::string username,

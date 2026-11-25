@@ -22,6 +22,8 @@ public:
     const Key& key() const { return key_; }
     const std::optional<Record>& record() const { return record_; }
 
+    void setRecord(const Record& record) { record_ = record; }
+
     void setKey(Key key) {
         key_ = std::move(key);
         record_.reset();

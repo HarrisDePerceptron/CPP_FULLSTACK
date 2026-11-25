@@ -11,6 +11,7 @@
     <main class="mx-auto max-w-6xl px-5 py-8 sm:px-10 sm:py-12">
         <header class="mb-7 border-b border-rule pb-7">
             <h1 class="font-mono text-3xl font-bold tracking-tight sm:text-5xl">App server demo</h1>
+            <a href="/social" class="mt-3 inline-block font-semibold text-moss underline">Open the social feed</a>
             <p class="mt-3 max-w-xl text-muted">Try the public routes, sign in with the demo credentials from your configuration or server terminal, and upload a file.</p>
         </header>
 

@@ -208,6 +208,37 @@ using ProjectMemberRecord = DaoRecord<ProjectMemberFields>;
 
 Initialize the project and user DAOs first. The membership DAO creates or reuses a unique index on `(project_id, user_id)`. Each project can have many users, and each user can join many projects. Use a `std::tuple` of descriptors when a table needs multiple composite constraints.
 
+List queries can load multiple direct foreign fields. Pass each selection alongside
+the usual pagination, filters, and ordering:
+
+```cpp
+auto page = co_await posts.find(
+    20, 0,
+    withForeign<&PostRecord::author_id>(users),
+    withForeign<&PostRecord::reviewer_id>(reviewers));
+```
+
+The DAO loads targets in batches for each selected field. Access a loaded
+target through `record()` on its foreign field. Null keys and missing targets
+leave `record()` empty. Pass a transaction as the first argument to read the
+page and its targets in the same transaction.
+
+### Soft-delete and restore records
+
+Every DAO table has a managed, nullable `deleted_at` column. Existing rows
+start active. Use `softDeleteById(id)` to mark a row deleted and
+`restoreById(id)` to make it active again. Both accept a transaction as their
+first argument and return whether the row changed state. Timestamp-enabled
+tables refresh `updated_at` for both operations. `deleteById(id)` physically
+removes either an active or a deleted row.
+
+Normal reads, counts, and foreign loading use active rows. Pass
+`includeDeleted()` to `find`, after the ID in `findById`, or before the
+predicates in `count` to include deleted rows in that query. Foreign targets
+still use active rows. Use `select<&Record::deleted_at>()` or `selectAll()`
+to read the timestamp in a list query. Deleted rows retain their foreign
+references and unique values until physically removed.
+
 ### Run a transaction
 
 Pass the transaction context to every DAO call inside the callback. The callback can use typed operations and bound SQL across DAOs on the same backend.
@@ -322,3 +353,12 @@ Derive from the service and override `list`, `get`, `create`, `patch`, or
 `remove` for business rules. Derive from the router to override the same
 operation hooks when behavior needs access to the HTTP request. Keep response
 formatting and method restrictions in the shared dispatcher.
+
+## Social feed demo
+
+Open `/social` and sign in with the local demo account, or create an account
+on the sign-in page. Publish a post, then sign out and create or sign in to a
+second account. Open the post's comments, add a comment, and like the post.
+Sign back in as the first user to see the second user's comment and the shared
+like count. Your own like state is tracked separately. Posts, comments, and likes
+are stored in the local SQLite database.

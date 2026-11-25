@@ -31,20 +31,37 @@ Cookie sessionCookie(const HttpRequestPtr& request, std::string value, int maxAg
     return cookie;
 }
 
-Task<HttpResponsePtr> login(std::shared_ptr<Services> services, HttpRequestPtr request) {
+Credentials readCredentials(const HttpRequestPtr& request, std::size_t maxBodyBytes) {
     Credentials credentials;
     const auto body = request->body();
-    if (request->contentType() != CT_APPLICATION_JSON || body.size() > 4096) {
-        co_return apiError(*request, k400BadRequest, "VALIDATION_FAILED", "Send a JSON username and password.");
-    }
-    const std::string json(body);
-    if (glz::validate_json(json) ||
-        glz::read<glz::opts{.error_on_missing_keys = true}>(credentials, json) ||
+    if (request->contentType() != CT_APPLICATION_JSON || body.size() > maxBodyBytes ||
+        glz::validate_json(body) ||
+        glz::read<glz::opts{.error_on_missing_keys = true}>(credentials, body) ||
         credentials.username.empty() || credentials.username.size() > 128 ||
         credentials.password.empty() || credentials.password.size() > 1024) {
-        co_return apiError(*request, k400BadRequest, "VALIDATION_FAILED", "Send a JSON username and password.");
+        throw RequestValidationError("Send a JSON username and password.");
     }
+    return credentials;
+}
 
+Task<HttpResponsePtr> signup(std::shared_ptr<Services> services, HttpRequestPtr request) {
+    auto credentials = readCredentials(request, 8192);
+    const auto& name = credentials.username;
+    if (name.size() < 3 || name.size() > 32 ||
+        name.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") != std::string::npos ||
+        credentials.password.size() < 8) {
+        throw RequestValidationError(
+            "Use 3–32 letters, digits, underscores, or hyphens for the username, and at least 8 bytes for the password.");
+    }
+    Identity identity{name};
+    if (!co_await services->users.signup(std::move(credentials), services->workers)) {
+        co_return apiError(*request, k409Conflict, "CONFLICT", "That username is already taken.");
+    }
+    co_return apiOk(*request, std::move(identity), k201Created);
+}
+
+Task<HttpResponsePtr> login(std::shared_ptr<Services> services, HttpRequestPtr request) {
+    const auto credentials = readCredentials(request, 4096);
     if (!co_await services->users.authenticate(credentials.username, credentials.password, services->workers)) {
         co_return apiError(*request, k401Unauthorized, "UNAUTHORIZED", "Invalid username or password.");
     }
@@ -61,6 +78,9 @@ Task<HttpResponsePtr> login(std::shared_ptr<Services> services, HttpRequestPtr r
 
 void registerAuthRoutes(const std::shared_ptr<Services>& services, const std::string& jwt) {
     auto& server = app();
+    server.registerHandler("/api/signup", [services](HttpRequestPtr request) {
+        return signup(services, std::move(request));
+    }, {Post});
     server.registerHandler("/api/login", [services](HttpRequestPtr request) {
         return login(services, std::move(request));
     }, {Post});

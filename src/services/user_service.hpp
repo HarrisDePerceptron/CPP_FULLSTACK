@@ -24,6 +24,10 @@ public:
 
     drogon::Task<std::optional<Credentials>> seedDemo() const;
     drogon::Task<> configureDemo(std::string username, std::string password) const;
+    const UserDao& dao() const { return dao_; }
+
+    drogon::Task<std::optional<UserRecord::Id>> findId(std::string username) const;
+    drogon::Task<bool> signup(Credentials credentials, Workers& workers) const;
     drogon::Task<bool> authenticate(std::string username, std::string password, Workers& workers) const;
 
 private:

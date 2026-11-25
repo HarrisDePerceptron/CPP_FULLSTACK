@@ -13,5 +13,6 @@ void registerAuthRoutes(const std::shared_ptr<Services>& services, const std::st
 void registerUploadRoutes(const std::shared_ptr<Services>& services, const std::string& jwt);
 void registerContentRoutes(const std::shared_ptr<Services>& services);
 void registerDemoRoutes();
+void registerSocialRoutes(const std::shared_ptr<Services>& services, const std::string& jwt);
 
 }

@@ -347,6 +347,9 @@ public:
         if (!usable_.load()) throw std::runtime_error("SQLite backend unavailable after failed rollback");
         return client_;
     }
+    std::string_view currentTimestampSql() const override {
+        return "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
+    }
     std::string parameter(std::size_t index) const override { return "?" + std::to_string(index); }
     std::string containsText(std::string_view column, std::size_t index) const override {
         return "instr(" + std::string(column) + ", " + parameter(index) + ") > 0";

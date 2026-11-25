@@ -405,6 +405,70 @@ static_assert(!SupportsForeignFind<&PostRecord::title, UserDao>);
 static_assert(!SupportsForeignFind<&PostRecord::author_id, IndexedDao>);
 static_assert(!SupportsForeignFind<&UserRecord::username, UserDao>);
 
+template <auto Member, typename Dao>
+concept SupportsForeignPage = requires(const PostDao& posts, const Dao& target) {
+    posts.find(withForeign<Member>(target));
+};
+
+static_assert(SupportsForeignPage<&PostRecord::author_id, UserDao>);
+static_assert(!SupportsForeignPage<&PostRecord::author_id, IndexedDao>);
+static_assert(!SupportsForeignPage<&PostRecord::title, UserDao>);
+static_assert(!SupportsForeignPage<&UserRecord::username, UserDao>);
+
+TEST_CASE("Foreign selections load one ordered page with shared and nullable references", "[users]") {
+    const auto database = openTestDatabase(":memory:");
+    const auto users = drogon::sync_wait(UserDao::init(database));
+    const auto reviewers = drogon::sync_wait(IndexedDao::init(database));
+    const auto posts = drogon::sync_wait(PostDao::init(database));
+    const auto author = drogon::sync_wait(users.create({{"author", "hash"}}));
+    drogon::sync_wait(reviewers.create({{7, "reviewer"}}));
+    drogon::sync_wait(posts.create({{"first", author, {}}}));
+    const auto second = drogon::sync_wait(posts.create({{"second", author, 7}}));
+    const auto third = drogon::sync_wait(posts.create({{"third", author, {}}}));
+
+    const auto page = drogon::sync_wait(posts.find(2, 1,
+        orderBy<&PostRecord::id>(),
+        withForeign<&PostRecord::author_id>(users),
+        withForeign<&PostRecord::reviewer_id>(reviewers)));
+    REQUIRE(page.size() == 2);
+    CHECK(page[0].id == second);
+    CHECK(page[1].id == third);
+    for (const auto& post : page) {
+        REQUIRE(post.author_id.value.record());
+        CHECK(post.author_id.value.record()->username.value == "author");
+    }
+    REQUIRE(page[0].reviewer_id.record());
+    CHECK(page[0].reviewer_id.record()->category.value == "reviewer");
+    CHECK(page[1].isLoaded<&PostRecord::reviewer_id>());
+    CHECK_FALSE(page[1].reviewer_id.record());
+
+    const auto otherUsers = drogon::sync_wait(UserDao::init(openTestDatabase(":memory:")));
+    CHECK_THROWS_WITH(drogon::sync_wait(posts.find(2, 100,
+        withForeign<&PostRecord::author_id>(otherUsers))), "foreign DAOs must use the same database backend");
+}
+
+TEST_CASE("Foreign page batches resolve uncommitted keys in the caller transaction", "[users]") {
+    const auto database = openTestDatabase(":memory:");
+    const auto users = drogon::sync_wait(UserDao::init(database));
+    const auto reviewers = drogon::sync_wait(IndexedDao::init(database));
+    const auto posts = drogon::sync_wait(PostDao::init(database));
+
+    runOnEventLoop(database->transaction([&](DaoTransaction& tx) -> drogon::Task<> {
+        for (int index = 0; index <= 500; ++index) {
+            const auto username = "author-" + std::to_string(index);
+            const auto author = co_await users.create(tx, {{username, "hash"}});
+            co_await posts.create(tx, {{username, author, {}}});
+        }
+        const auto page = co_await posts.find(tx, 501, 0, orderBy<&PostRecord::id>(),
+            withForeign<&PostRecord::author_id>(users));
+        REQUIRE(page.size() == 501);
+        for (const auto& post : page) {
+            REQUIRE(post.author_id.value.record());
+            CHECK(post.author_id.value.record()->username.value == post.title);
+        }
+    }));
+}
+
 TEST_CASE("Foreign record fields enforce references and load related records on demand", "[users]") {
     TemporaryDirectory temporary;
     const auto database = openTestDatabase(temporary.path() / "relations.sqlite3");
@@ -496,6 +560,11 @@ TEST_CASE("SQLite startup adds nullable foreign columns and rejects inconsistent
     REQUIRE(orphan);
     CHECK(orphan->reviewer_id.key() == 99);
     CHECK_FALSE(orphan->reviewer_id.record());
+    const auto orphans = drogon::sync_wait(posts.find(withForeign<&PostRecord::reviewer_id>(reviewers)));
+    REQUIRE(orphans.size() == 1);
+    CHECK(orphans.front().reviewer_id.key() == 99);
+    CHECK_FALSE(orphans.front().reviewer_id.record());
+
     CHECK_THROWS_WITH(drogon::sync_wait(PostDao::init(database)),
                       "Schema mismatch for posts: orphaned foreign key rows; explicit migration required");
     legacy->execSqlSync("DROP TABLE posts");
@@ -793,7 +862,7 @@ TEST_CASE("Generated IDs and managed timestamps cover custom demo writes and opt
         "SELECT name FROM pragma_table_info('users')"));
     std::vector<std::string> names;
     for (const auto& column : columns) names.push_back(column[0].as<std::string>());
-    CHECK(names == std::vector<std::string>{"username", "password_hash", "seed_key", "id", "created_at", "updated_at"});
+    CHECK(names == std::vector<std::string>{"username", "password_hash", "seed_key", "id", "deleted_at", "created_at", "updated_at"});
     CHECK(first->updated_at == first->created_at);
     CHECK(drogon::sync_wait(users.find(where<&UserRecord::id>(*first->id))).size() == 1);
     CHECK(drogon::sync_wait(users.find(where<&UserRecord::created_at>(*first->created_at))).size() == 1);
@@ -827,6 +896,84 @@ TEST_CASE("Generated IDs and managed timestamps cover custom demo writes and opt
     CHECK_FALSE(plain->updated_at);
     CHECK(drogon::sync_wait(disabled.executeSql(
         "SELECT name FROM pragma_table_info('users') WHERE name IN ('created_at', 'updated_at')")).empty());
+}
+
+TEST_CASE("Soft delete hides a row and restore preserves its original creation time", "[users]") {
+    const auto users = drogon::sync_wait(UserDao::init(openTestDatabase(":memory:")));
+    const auto id = drogon::sync_wait(users.create({{"alice", "hash"}}));
+    const auto active = drogon::sync_wait(users.findById(id));
+    REQUIRE(active);
+    REQUIRE(active->created_at);
+    CHECK(active->updated_at == active->created_at);
+    CHECK_FALSE(active->deleted_at);
+    drogon::sync_wait(users.executeSql("UPDATE users SET updated_at = NULL WHERE id = ?", id));
+    REQUIRE(drogon::sync_wait(users.update(*active)));
+    REQUIRE(drogon::sync_wait(users.findById(id))->updated_at);
+    drogon::sync_wait(users.executeSql("UPDATE users SET updated_at = NULL WHERE id = ?", id));
+
+    CHECK(drogon::sync_wait(users.softDeleteById(id)));
+    CHECK_FALSE(drogon::sync_wait(users.softDeleteById(id)));
+    CHECK_FALSE(drogon::sync_wait(users.softDeleteById(id + 100)));
+    CHECK_FALSE(drogon::sync_wait(users.update(*active)));
+    CHECK_FALSE(drogon::sync_wait(users.findById(id)));
+    CHECK_FALSE(drogon::sync_wait(users.findByUsername("alice")));
+    CHECK(drogon::sync_wait(users.count(where<&UserRecord::id>(id))) == 0);
+    CHECK(drogon::sync_wait(users.count(includeDeleted(), where<&UserRecord::id>(id))) == 1);
+    CHECK_THROWS(drogon::sync_wait(users.create({{"alice", "other"}})));
+
+    const auto deleted = drogon::sync_wait(users.findById(id, includeDeleted()));
+    REQUIRE(deleted);
+    REQUIRE(deleted->deleted_at);
+    CHECK(deleted->updated_at == deleted->deleted_at);
+    CHECK(deleted->created_at == active->created_at);
+    const auto bob = drogon::sync_wait(users.create({{"bob", "hash"}}));
+    const auto page = drogon::sync_wait(users.find(1, 0, orderBy<&UserRecord::id>()));
+    REQUIRE(page.size() == 1);
+    CHECK(page.front().id == bob);
+    const auto tombstones = drogon::sync_wait(users.find(includeDeleted(),
+        select<&UserRecord::deleted_at>(), where<&UserRecord::deleted_at>(*deleted->deleted_at)));
+    REQUIRE(tombstones.size() == 1);
+    CHECK(tombstones.front().deleted_at == deleted->deleted_at);
+
+    drogon::sync_wait(users.executeSql("UPDATE users SET updated_at = NULL WHERE id = ?", id));
+    CHECK(drogon::sync_wait(users.restoreById(id)));
+    CHECK_FALSE(drogon::sync_wait(users.restoreById(id)));
+    CHECK_FALSE(drogon::sync_wait(users.restoreById(id + 100)));
+    const auto restored = drogon::sync_wait(users.findById(id));
+    REQUIRE(restored);
+    CHECK(restored->updated_at);
+    CHECK(restored->created_at == active->created_at);
+    CHECK_FALSE(restored->deleted_at);
+    CHECK(drogon::sync_wait(users.softDeleteById(id)));
+    CHECK(drogon::sync_wait(users.deleteById(id)));
+    CHECK_FALSE(drogon::sync_wait(users.findById(id, includeDeleted())));
+}
+
+TEST_CASE("Soft deletion on an existing untimed table migrates and rolls back atomically", "[users]") {
+    TemporaryDirectory temporary;
+    const auto path = temporary.path() / "legacy.sqlite3";
+    const auto legacy = drogon::orm::DbClient::newSqlite3Client("filename='" + path.string() + "'", 1);
+    legacy->execSqlSync("CREATE TABLE users (username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, "
+                        "seed_key TEXT UNIQUE, id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL)");
+    legacy->execSqlSync("INSERT INTO users (username, password_hash) VALUES ('legacy', 'hash')");
+    const auto database = openTestDatabase(path);
+    const auto users = drogon::sync_wait(UntimedUserDao::init(database));
+    const auto migrated = drogon::sync_wait(users.findById(1));
+    REQUIRE(migrated);
+    CHECK_FALSE(migrated->deleted_at);
+    CHECK_THROWS_WITH(runOnEventLoop(users.transaction([&](DaoTransaction& tx) -> drogon::Task<> {
+        CHECK(co_await users.softDeleteById(tx, 1));
+        CHECK_FALSE(co_await users.findById(tx, 1));
+        const auto deleted = co_await users.findById(tx, 1, includeDeleted());
+        REQUIRE(deleted);
+        CHECK(deleted->deleted_at);
+        CHECK_FALSE(deleted->updated_at);
+        CHECK((co_await users.count(tx, includeDeleted())) == 1);
+        CHECK(co_await users.restoreById(tx, 1));
+        CHECK(co_await users.softDeleteById(tx, 1));
+        throw std::runtime_error("rollback soft delete");
+    })), "rollback soft delete");
+    CHECK(drogon::sync_wait(users.findById(1)));
 }
 
 template <typename Status>

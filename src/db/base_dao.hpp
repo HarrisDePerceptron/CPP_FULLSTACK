@@ -12,6 +12,8 @@
 #include <algorithm>
 #include <array>
 #include <concepts>
+#include <map>
+#include <set>
 #include <tuple>
 #include <cstdint>
 #include <vector>
@@ -26,6 +28,7 @@ template <auto... Members>
 struct SelectFields {};
 
 struct SelectAll {};
+struct IncludeDeleted {};
 
 template <auto Member>
 struct OrderBy {
@@ -54,6 +57,8 @@ template <auto... Members>
     requires (sizeof...(Members) > 0) && (std::is_member_object_pointer_v<decltype(Members)> && ...)
 auto select() { return detail::SelectFields<Members...>{}; }
 
+inline auto includeDeleted() { return detail::IncludeDeleted{}; }
+
 inline auto selectAll() { return detail::SelectAll{}; }
 
 template <auto Member>
@@ -72,17 +77,22 @@ struct DaoOptions { bool timestamps = true; };
 
 template <typename Derived, typename Record, DaoOptions Options = {}>
 class BaseDao {
+    template <typename, typename, DaoOptions>
+    friend class BaseDao;
+
     using Fields = typename Record::FieldRecord;
     using Id = typename Record::Id;
     using TransactionScope = std::optional<std::reference_wrapper<const DaoTransaction>>;
 
     template <auto Member>
     static constexpr bool recordMember =
+        std::same_as<detail::DaoDeletion, typename detail::DaoPredicate<Member>::Record> ||
         std::same_as<Fields, typename detail::DaoPredicate<Member>::Record> ||
         std::same_as<detail::DaoTimestamps<Fields>, typename detail::DaoPredicate<Member>::Record> ||
         (Record::generatedId &&
          std::same_as<detail::DaoGeneratedKey<Fields, true>, typename detail::DaoPredicate<Member>::Record>);
 
+    static constexpr bool validModifier(std::type_identity<detail::IncludeDeleted>) { return true; }
     static constexpr bool validModifier(...) { return false; }
     static constexpr bool validModifier(std::type_identity<detail::SelectAll>) { return true; }
 
@@ -96,6 +106,11 @@ class BaseDao {
 
     template <auto Member>
     static constexpr bool validModifier(std::type_identity<detail::DaoPredicate<Member>>) { return recordMember<Member>; }
+
+    template <auto Member, typename Dao>
+    static constexpr bool validModifier(std::type_identity<detail::ForeignSelection<Member, Dao>>) {
+        return detail::ForeignSelectionFor<Member, Record, Dao>;
+    }
 
 public:
     using RecordType = Record;
@@ -185,7 +200,7 @@ public:
             && (detail::ForeignSelectionFor<Members, Record, TargetDaos> && ...)
     drogon::Task<std::optional<Record>> findById(
         Id id, detail::ForeignSelection<Members, TargetDaos>... selections) const {
-        return readWithForeign({}, std::move(id), selections...);
+        return readWithForeign({}, std::move(id), false, selections...);
     }
 
     template <auto... Members, typename... TargetDaos>
@@ -193,7 +208,22 @@ public:
             && (detail::ForeignSelectionFor<Members, Record, TargetDaos> && ...)
     drogon::Task<std::optional<Record>> findById(
         const DaoTransaction& tx, Id id, detail::ForeignSelection<Members, TargetDaos>... selections) const {
-        return readWithForeign(std::cref(tx), std::move(id), selections...);
+        return readWithForeign(std::cref(tx), std::move(id), false, selections...);
+    }
+
+    template <auto... Members, typename... TargetDaos>
+        requires (detail::ForeignSelectionFor<Members, Record, TargetDaos> && ...)
+    drogon::Task<std::optional<Record>> findById(
+        Id id, detail::IncludeDeleted, detail::ForeignSelection<Members, TargetDaos>... selections) const {
+        return readWithForeign({}, std::move(id), true, selections...);
+    }
+
+    template <auto... Members, typename... TargetDaos>
+        requires (detail::ForeignSelectionFor<Members, Record, TargetDaos> && ...)
+    drogon::Task<std::optional<Record>> findById(
+        const DaoTransaction& tx, Id id, detail::IncludeDeleted,
+        detail::ForeignSelection<Members, TargetDaos>... selections) const {
+        return readWithForeign(std::cref(tx), std::move(id), true, selections...);
     }
 
     bool usesBackend(const DatabaseBackendPtr& database) const {
@@ -224,16 +254,45 @@ public:
         return deleteRecord(std::cref(tx), std::move(id));
     }
 
+    drogon::Task<bool> softDeleteById(Id id) const {
+        return setDeleted({}, std::move(id), true);
+    }
+
+    drogon::Task<bool> softDeleteById(const DaoTransaction& tx, Id id) const {
+        return setDeleted(std::cref(tx), std::move(id), true);
+    }
+
+    drogon::Task<bool> restoreById(Id id) const {
+        return setDeleted({}, std::move(id), false);
+    }
+
+    drogon::Task<bool> restoreById(const DaoTransaction& tx, Id id) const {
+        return setDeleted(std::cref(tx), std::move(id), false);
+    }
+
+    template <auto... Members>
+        requires (recordMember<Members> && ...)
+    drogon::Task<std::int64_t> count(detail::IncludeDeleted, detail::DaoPredicate<Members>... predicates) const {
+        return countRecords({}, true, std::move(predicates)...);
+    }
+
+    template <auto... Members>
+        requires (recordMember<Members> && ...)
+    drogon::Task<std::int64_t> count(
+        const DaoTransaction& tx, detail::IncludeDeleted, detail::DaoPredicate<Members>... predicates) const {
+        return countRecords(std::cref(tx), true, std::move(predicates)...);
+    }
+
     template <auto... Members>
         requires (sizeof...(Members) > 0) && (recordMember<Members> && ...)
     drogon::Task<std::int64_t> count(detail::DaoPredicate<Members>... predicates) const {
-        return countRecords({}, std::move(predicates)...);
+        return countRecords({}, false, std::move(predicates)...);
     }
 
     template <auto... Members>
         requires (sizeof...(Members) > 0) && (recordMember<Members> && ...)
     drogon::Task<std::int64_t> count(const DaoTransaction& tx, detail::DaoPredicate<Members>... predicates) const {
-        return countRecords(std::cref(tx), std::move(predicates)...);
+        return countRecords(std::cref(tx), false, std::move(predicates)...);
     }
 
     // Use application-owned SQL and pass runtime values as bound parameters.
@@ -272,7 +331,7 @@ protected:
             projection += column;
             if (field.nullable) optionalColumns_.push_back(field.name);
             else appendColumn(requiredProjection_, column);
-            if (field.timestamp) continue;
+            if (field.timestamp || field.name == "deleted_at") continue;
 
             const auto marker = parameter(++updateIndex);
             if (field.primary) {
@@ -298,7 +357,7 @@ protected:
             }
         }
         if (assignments.empty()) assignments = key_ + " = " + key_;
-        update_ = "UPDATE " + table_ + " SET " + assignments + " WHERE " + key_ + " = " + keyParameter;
+        update_ = "UPDATE " + table_ + " SET " + assignments + " WHERE " + key_ + " = " + keyParameter + " AND deleted_at IS NULL";
         select_ = "SELECT " + projection + " FROM " + table_;
         insert_ = "INSERT INTO " + table_;
         if (columns.empty()) insert_ += " DEFAULT VALUES";
@@ -336,19 +395,20 @@ private:
         return tx.client();
     }
 
-    drogon::Task<std::optional<Record>> readById(TransactionScope tx, Id id) const {
-        const auto rows = co_await execute(tx, select_ + " WHERE " + key_ + " = " + parameter(1), ownArgument(std::move(id)));
+    drogon::Task<std::optional<Record>> readById(TransactionScope tx, Id id, bool include = false) const {
+        const auto rows = co_await execute(tx, select_ + " WHERE " + key_ + " = " + parameter(1) +
+            (include ? "" : " AND deleted_at IS NULL"), ownArgument(std::move(id)));
         if (rows.empty()) co_return std::nullopt;
         co_return mapRow(rows[0]);
     }
 
     template <auto... Members, typename... TargetDaos>
     drogon::Task<std::optional<Record>> readWithForeign(
-        TransactionScope tx, Id id, detail::ForeignSelection<Members, TargetDaos>... selections) const {
+        TransactionScope tx, Id id, bool include, detail::ForeignSelection<Members, TargetDaos>... selections) const {
         if (!(selections.dao.get().usesBackend(database_) && ...)) {
             throw std::invalid_argument("foreign DAOs must use the same database backend");
         }
-        auto record = co_await readById(tx, std::move(id));
+        auto record = co_await readById(tx, std::move(id), include);
         if (record) {
             if (tx) {
                 ((co_await selections.dao.get().loadForeign(tx->get(), detail::foreignField((*record).*Members))), ...);
@@ -377,11 +437,20 @@ private:
         co_return result.affectedRows() != 0;
     }
 
+    drogon::Task<bool> setDeleted(TransactionScope tx, Id id, bool deleted) const {
+        const std::string value(deleted ? database_->currentTimestampSql() : "NULL");
+        const auto result = co_await execute(tx, "UPDATE " + table_ + " SET deleted_at = " + value +
+            " WHERE " + key_ + " = " + parameter(1) +
+            (deleted ? " AND deleted_at IS NULL" : " AND deleted_at IS NOT NULL"),
+            ownArgument(std::move(id)));
+        co_return result.affectedRows() != 0;
+    }
+
     template <auto... Members>
-    drogon::Task<std::int64_t> countRecords(TransactionScope tx, detail::DaoPredicate<Members>... predicates) const {
+    drogon::Task<std::int64_t> countRecords(TransactionScope tx, bool include, detail::DaoPredicate<Members>... predicates) const {
         std::string sql = "SELECT COUNT(*) FROM " + table_;
         std::vector<detail::QueryValue> values;
-        appendWhere(sql, values, predicates...);
+        appendWhere(sql, values, include, predicates...);
         const auto rows = co_await executeBound(tx, std::move(sql), std::move(values));
         co_return rows[0][0].template as<std::int64_t>();
     }
@@ -396,6 +465,9 @@ private:
         }
         auto fields = rowToStruct<Fields>(row, omitted);
         Record result(std::move(fields), std::move(omitted));
+        if (result.isColumnLoaded("deleted_at")) {
+            detail::readRowField(result.deleted_at, row.at("deleted_at"), "deleted_at");
+        }
         if constexpr (Record::generatedId) result.id = row.at("id").template as<Id>();
         if constexpr (Options.timestamps) {
             if (result.isColumnLoaded("created_at")) {
@@ -421,7 +493,7 @@ private:
     template <std::size_t I>
     void addField() {
         constexpr auto name = names_[I];
-        static_assert(!timestampName(name) && (!Record::generatedId || name != "id"),
+        static_assert(name != "deleted_at" && !timestampName(name) && (!Record::generatedId || name != "id"),
                       "reserved DAO fields are inherited");
         static_assert(!Traits<I>::foreignKey() || !Traits<I>::primary, "foreign fields cannot be primary keys");
         auto field = DatabaseColumn{std::string(name), detail::columnType<typename Value<I>::Type>(),
@@ -447,6 +519,7 @@ private:
         if constexpr (Record::generatedId) {
             schema_.push_back({"id", ColumnType::integer, false, true, false, false, {}, true});
         }
+        schema_.push_back({"deleted_at", ColumnType::datetime, true, false, false, false, {}});
         if constexpr (Options.timestamps) {
             for (const auto name : timestampNames_) {
                 DatabaseColumn field{std::string(name), ColumnType::datetime, true, false, false, true, {}, false, true};
@@ -471,6 +544,7 @@ private:
         std::vector<std::string_view> selected;
         std::vector<std::pair<std::string_view, SortDirection>> ordering;
         bool all = false;
+        bool includeDeleted = false;
     };
 
     static void appendColumn(std::string& list, std::string_view column) {
@@ -486,6 +560,11 @@ private:
 
     static auto collect(FindQuery& query, EqualityFilters& filters) {
         query.equality = std::move(filters);
+        return std::tuple{};
+    }
+
+    static auto collect(FindQuery& query, detail::IncludeDeleted) {
+        query.includeDeleted = true;
         return std::tuple{};
     }
 
@@ -515,10 +594,72 @@ private:
         return std::tie(predicate);
     }
 
+    template <auto Member, typename Dao>
+    static auto collect(FindQuery& query, detail::ForeignSelection<Member, Dao>) {
+        query.selected.push_back(glz::get_name<Member>());
+        return std::tuple{};
+    }
+
+    static auto foreignSelection(const auto&) { return std::tuple{}; }
+
+    template <auto Member, typename Dao>
+    static auto foreignSelection(detail::ForeignSelection<Member, Dao> selection) {
+        return std::tuple{selection};
+    }
+
+    drogon::Task<std::map<Id, Record>> readForeignBatch(
+        TransactionScope tx, const std::set<Id>& keys) const {
+        constexpr std::size_t batchSize = 500;
+        const std::string keyName(Record::keyColumn);
+        std::map<Id, Record> records;
+        auto next = keys.begin();
+        while (next != keys.end()) {
+            std::string placeholders;
+            std::vector<detail::QueryValue> values;
+            while (next != keys.end() && values.size() < batchSize) {
+                values.push_back(queryValue(*next++));
+                appendColumn(placeholders, parameter(values.size()));
+            }
+            auto rows = co_await executeBound(tx, select_ + " WHERE " + key_ +
+                " IN (" + placeholders + ") AND deleted_at IS NULL", std::move(values));
+            for (const auto& row : rows) {
+                auto key = detail::readScalar<Id>(row.at(keyName));
+                records.emplace(std::move(key), mapRow(row));
+            }
+        }
+        co_return records;
+    }
+
+    template <auto Member, typename Dao>
+    static drogon::Task<> loadForeignPage(TransactionScope tx, std::vector<Record>& records,
+                                           detail::ForeignSelection<Member, Dao> selection) {
+        using TargetId = typename Dao::RecordType::Id;
+        std::set<TargetId> keys;
+        for (auto& record : records) {
+            const std::optional<TargetId> key(detail::foreignField(record.*Member).key());
+            if (key) keys.insert(*key);
+        }
+        if (keys.empty()) co_return;
+        const auto targets = co_await selection.dao.get().readForeignBatch(tx, keys);
+        for (auto& record : records) {
+            auto& field = detail::foreignField(record.*Member);
+            const std::optional<TargetId> key(field.key());
+            if (!key) continue;
+            const auto target = targets.find(*key);
+            if (target != targets.end()) field.setRecord(target->second);
+        }
+    }
+
     template <typename... Modifiers>
     drogon::Task<std::vector<Record>> findPage(
         TransactionScope tx, std::int64_t limit, std::int64_t offset, Modifiers... modifiers) const {
         if (limit <= 0 || offset < 0) throw std::invalid_argument("invalid pagination");
+        const auto foreign = std::tuple_cat(foreignSelection(modifiers)...);
+        const auto sameBackend = std::apply([&](const auto&... selections) {
+            return (selections.dao.get().usesBackend(database_) && ...);
+        }, foreign);
+        if (!sameBackend) throw std::invalid_argument("foreign DAOs must use the same database backend");
+
         FindQuery query;
         // Collect left to right so explicit sort fields retain the caller's order.
         auto parts = std::tuple<decltype(collect(query, modifiers))...>{collect(query, modifiers)...};
@@ -548,10 +689,12 @@ private:
                 (direction == SortDirection::desc ? " DESC NULLS LAST" : " ASC NULLS LAST"));
         }
         std::vector<detail::QueryValue> values;
-        std::apply([&](const auto&... predicates) { appendWhere(sql, values, predicates...); }, predicates);
+        std::apply([&](const auto&... predicates) { appendWhere(sql, values, query.includeDeleted, predicates...); }, predicates);
+        bool hasWhere = !query.includeDeleted || std::tuple_size_v<decltype(predicates)> != 0;
         for (auto& [name, value] : query.equality.entries_) {
             requireEnabledColumn(name);
-            sql += values.empty() ? " WHERE " : " AND ";
+            sql += hasWhere ? " AND " : " WHERE ";
+            hasWhere = true;
             values.push_back(std::move(value));
             sql += database_->nullSafeEqual(detail::quoteIdentifier(name), values.size());
         }
@@ -564,6 +707,12 @@ private:
         std::vector<Record> records;
         records.reserve(rows.size());
         for (const auto& row : rows) records.push_back(mapRow(row, omitted));
+        if constexpr (std::tuple_size_v<decltype(foreign)> > 0) {
+            const auto load = [&](const auto&... selections) -> drogon::Task<> {
+                (co_await loadForeignPage(tx, records, selections), ...);
+            };
+            co_await std::apply(load, foreign);
+        }
         co_return records;
     }
 
@@ -621,10 +770,11 @@ private:
     }
 
     template <typename... Predicates>
-    void appendWhere(std::string& sql, std::vector<detail::QueryValue>& values,
+    void appendWhere(std::string& sql, std::vector<detail::QueryValue>& values, bool include,
                      const Predicates&... predicates) const {
+        if (!include) sql += " WHERE deleted_at IS NULL";
         if constexpr (sizeof...(Predicates) > 0) {
-            auto separator = " WHERE ";
+            auto separator = include ? " WHERE " : " AND ";
             auto append = [&](const auto& predicate) {
                 sql += separator + predicateSql(predicate, values);
                 separator = " AND ";

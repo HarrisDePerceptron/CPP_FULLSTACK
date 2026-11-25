@@ -39,6 +39,7 @@ class DatabaseBackend {
 public:
     virtual ~DatabaseBackend() = default;
     virtual const drogon::orm::DbClientPtr& client() const = 0;
+    virtual std::string_view currentTimestampSql() const = 0;
     virtual std::string parameter(std::size_t index) const = 0;
     virtual std::string containsText(std::string_view column, std::size_t index) const = 0;
     virtual std::string nullSafeEqual(std::string_view column, std::size_t index) const = 0;

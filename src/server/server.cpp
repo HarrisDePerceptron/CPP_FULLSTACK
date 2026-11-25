@@ -74,9 +74,13 @@ int serve(const std::filesystem::path& root) {
         const auto setup = [&]() -> Task<std::shared_ptr<Services>> {
             co_await switchThreadCoro(startupThread.getLoop());
             auto database = co_await openSqliteDatabase(state / "users.sqlite3");
-            auto dao = co_await UserDao::init(std::move(database));
+            auto dao = co_await UserDao::init(database);
+            auto posts = co_await SocialPostDao::init(database);
+            auto comments = co_await SocialCommentDao::init(database);
+            auto likes = co_await SocialLikeDao::init(database);
+            SocialService social(std::move(posts), std::move(comments), std::move(likes));
             auto initialized = std::make_shared<Services>(root, config, std::move(signingKey),
-                                                          UserService(std::move(dao)));
+                                                          UserService(std::move(dao)), std::move(social));
             if (!config.testUser.empty()) {
                 co_await initialized->users.configureDemo(config.testUser, config.testPassword);
             } else if (const auto credentials = co_await initialized->users.seedDemo()) {
@@ -103,6 +107,7 @@ int serve(const std::filesystem::path& root) {
     const auto jwt = registerJwtMiddleware({services, &services->tokens});
     registerDemoRoutes();
     registerAuthRoutes(services, jwt);
+    registerSocialRoutes(services, jwt);
     registerUploadRoutes(services, jwt);
     registerContentRoutes(services);
     server.setTermSignalHandler([services] { services->stopping.test_and_set(); })

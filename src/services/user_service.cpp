@@ -13,7 +13,7 @@ std::string hashPassword(std::string_view password) {
     if (crypto_pwhash_str(hash.data(), password.data(), password.size(),
                           crypto_pwhash_OPSLIMIT_INTERACTIVE,
                           crypto_pwhash_MEMLIMIT_INTERACTIVE) != 0) {
-        throw std::runtime_error("could not hash demo user password");
+        throw std::runtime_error("could not hash user password");
     }
     return hash.data();
 }
@@ -31,6 +31,16 @@ drogon::Task<std::optional<Credentials>> UserService::seedDemo() const {
 
 drogon::Task<> UserService::configureDemo(std::string username, std::string password) const {
     co_await dao_.replaceDemo(std::move(username), hashPassword(password));
+}
+
+drogon::Task<std::optional<UserRecord::Id>> UserService::findId(std::string username) const {
+    const auto user = co_await dao_.findByUsername(std::move(username));
+    co_return user ? user->id : std::nullopt;
+}
+
+drogon::Task<bool> UserService::signup(Credentials credentials, Workers& workers) const {
+    auto hash = co_await workers.submit([&] { return hashPassword(credentials.password); });
+    co_return co_await dao_.insertAccount(std::move(credentials.username), std::move(hash));
 }
 
 drogon::Task<bool> UserService::authenticate(std::string username, std::string password, Workers& workers) const {

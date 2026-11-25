@@ -15,6 +15,13 @@ drogon::Task<std::optional<UserRecord>> UserDao::findByUsername(std::string user
     co_return std::move(rows.front());
 }
 
+drogon::Task<bool> UserDao::insertAccount(std::string username, std::string passwordHash) const {
+    const auto result = co_await executeSql(
+        "INSERT INTO users (username, password_hash) VALUES (?, ?) "
+        "ON CONFLICT(username) DO NOTHING", std::move(username), std::move(passwordHash));
+    co_return result.affectedRows() == 1;
+}
+
 drogon::Task<bool> UserDao::hasDemo() const {
     const auto rows = co_await executeSql("SELECT 1 FROM users WHERE seed_key = 'demo'");
     co_return !rows.empty();

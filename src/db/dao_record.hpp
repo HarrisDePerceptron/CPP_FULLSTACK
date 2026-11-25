@@ -44,6 +44,10 @@ struct DaoTimestamps {
 template <typename Fields, bool Generated>
 struct DaoGeneratedKey {};
 
+struct DaoDeletion {
+    std::optional<DaoDateTime> deleted_at;
+};
+
 template <typename Fields>
 struct DaoGeneratedKey<Fields, true> {
     std::optional<std::int64_t> id;
@@ -52,7 +56,7 @@ struct DaoGeneratedKey<Fields, true> {
 }
 
 template <glz::reflectable Fields>
-struct DaoRecord : Fields, detail::DaoTimestamps<Fields>,
+struct DaoRecord : Fields, detail::DaoTimestamps<Fields>, detail::DaoDeletion,
                    detail::DaoGeneratedKey<Fields, std::tuple_size_v<detail::PrimaryTypes<Fields>> == 0> {
     using FieldRecord = Fields;
     using Keys = detail::PrimaryTypes<Fields>;

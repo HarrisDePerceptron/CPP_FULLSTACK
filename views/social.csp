@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Social feed</title>
+    <link rel="stylesheet" href="/public/demo.css">
+    <script defer src="/public/social.js"></script>
+</head>
+<body class="bg-sheet text-ink">
+    <main class="mx-auto max-w-2xl space-y-5 px-4 py-8 sm:py-12">
+        <header class="flex flex-wrap items-end justify-between gap-4 border-b border-rule pb-5">
+            <div>
+                <a href="/" class="text-sm text-moss underline">App server demo</a>
+                <h1 class="mt-2 text-4xl font-bold tracking-tight">Social feed</h1>
+                <p id="viewer" class="mt-1 break-all text-sm text-muted"></p>
+            </div>
+            <button id="sign-out" class="secondary" disabled>Sign out to switch accounts</button>
+        </header>
+        <form id="compose" class="panel space-y-3">
+            <label class="label">New post
+                <textarea class="control resize-y" name="text" rows="3" required aria-describedby="post-limit"></textarea>
+            </label>
+            <div class="flex items-center justify-between gap-3">
+                <span id="post-limit" class="text-sm text-muted">Up to 280 characters</span>
+                <button class="action" disabled>Post</button>
+            </div>
+        </form>
+        <p id="feed-status" role="status" class="text-sm text-muted">Loading feed…</p>
+        <section id="feed" aria-label="Posts" class="space-y-4"></section>
+        <button id="more-posts" class="secondary" hidden>Load more posts</button>
+    </main>
+</body>
+</html>
