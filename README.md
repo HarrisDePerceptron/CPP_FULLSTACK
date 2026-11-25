@@ -129,11 +129,12 @@ drogon::Task<> databaseExample() {
     const auto task_id = co_await tasks.create(draft);
 
     // Filter, select optional fields, sort, and fetch the first page.
-    auto page = co_await tasks.find(
-        20, 0,
-        select<&TaskRecord::note, &TaskRecord::related_project_id>(),
-        orderBy<&TaskRecord::title>(),
-        where<&TaskRecord::project_id>(website_id));
+    auto page = co_await tasks.find()
+        .limit(20)
+        .select<&TaskRecord::note, &TaskRecord::related_project_id>()
+        .orderBy<&TaskRecord::title>()
+        .where<&TaskRecord::project_id>(website_id)
+        .collect();
 
     if (!page.empty()) {
         auto& task = page.front();
@@ -145,14 +146,16 @@ drogon::Task<> databaseExample() {
     }
 
     // Count matches across all pages.
-    const auto total = co_await tasks.count(
-        where<&TaskRecord::project_id>(in({website_id, docs_id})),
-        where<&TaskRecord::title>(contains("docs")));
+    const auto total = co_await tasks.count()
+        .where<&TaskRecord::project_id>(in({website_id, docs_id}))
+        .where<&TaskRecord::title>(contains("docs"))
+        .collect();
     std::println("Matching tasks: {}", total);
 
     // Read by ID and explicitly fetch the related project.
-    const auto task = co_await tasks.findById(
-        task_id, withForeign<&TaskRecord::related_project_id>(projects));
+    const auto task = co_await tasks.findById(task_id)
+        .withForeign<&TaskRecord::related_project_id>(projects)
+        .collect();
     if (task && task->related_project_id.record()) {
         std::println("Related project: {}", task->related_project_id.record()->name.value);
     }
@@ -173,11 +176,13 @@ drogon::Task<> databaseExample() {
 | --- | --- |
 | `init(database)` | Creates or validates the table and applies supported additive schema upgrades. |
 | `create(record)` | Inserts a row and returns its primary key. Leave generated IDs empty on insert. |
-| `find(...)` | Defaults to 100 rows at offset 0. Returns the key and required fields, sorted by newest update when timestamps are enabled and by primary key otherwise. Use `select<...>()` or `selectAll()` for nullable fields, and `orderBy<Member>(SortDirection::desc)` for descending order. |
-| `findById(id)` | Returns an optional full record. Foreign fields contain keys. Pass `withForeign<Member>(target_dao)` to load selected related records, or call `target_dao.loadForeign(field)` later. |
-| `update(record)` | Updates by primary key and preserves fields that `find()` omitted. A loaded nullable field set to `std::nullopt` clears the value. |
+| `find().collect()` | Defaults to 100 rows at offset 0. Returns the key and required fields, sorted by newest update when timestamps are enabled and by primary key otherwise. Use `.select<...>()` or `.selectAll()` for nullable fields, and `.orderBy<Member>(SortDirection::desc)` for descending order. |
+| `findById(id).collect()` | Returns an optional full record. Chain `.withForeign<Member>(target_dao)` to load selected related records. |
+| `update(record)` | Updates by primary key and preserves fields that the query omitted. A loaded nullable field set to `std::nullopt` clears the value. |
+| `createMany(records)` | Inserts the batch atomically and returns keys in input order. |
+| `updateMany(records)` | Updates the batch atomically. Returns false and rolls back if a row is missing or soft-deleted. |
 | `deleteById(id)` | Deletes by primary key and reports whether a row was deleted. |
-| `count(where<...>(...))` | Counts all matching rows and requires at least one predicate. |
+| `count().where<Member>(value).collect()` | Counts matches across all pages. Omit filters to count all active rows. |
 | `executeSql(sql, args...)` | Runs custom, backend-specific SQL with bound arguments. |
 
 `where<Member>(value)` means equality. Use `eq`, `gt`, `gte`, `lt`, `lte`, `in`, or `contains` to name an operator. Separate filters combine with `AND`. `contains` matches literal, case-sensitive text. `negate(where<...>(...))` includes rows with `NULL` when the original filter excludes them.
@@ -212,16 +217,17 @@ List queries can load multiple direct foreign fields. Pass each selection alongs
 the usual pagination, filters, and ordering:
 
 ```cpp
-auto page = co_await posts.find(
-    20, 0,
-    withForeign<&PostRecord::author_id>(users),
-    withForeign<&PostRecord::reviewer_id>(reviewers));
+auto page = co_await posts.find()
+    .limit(20)
+    .withForeign<&PostRecord::author_id>(users)
+    .withForeign<&PostRecord::reviewer_id>(reviewers)
+    .collect();
 ```
 
 The DAO loads targets in batches for each selected field. Access a loaded
 target through `record()` on its foreign field. Null keys and missing targets
-leave `record()` empty. Pass a transaction as the first argument to read the
-page and its targets in the same transaction.
+leave `record()` empty. Use `find(tx)` to read the page and its targets in
+the same transaction. Finish the builder with `.collect()` and await the result.
 
 ### Soft-delete and restore records
 
@@ -232,14 +238,18 @@ first argument and return whether the row changed state. Timestamp-enabled
 tables refresh `updated_at` for both operations. `deleteById(id)` physically
 removes either an active or a deleted row.
 
-Normal reads, counts, and foreign loading use active rows. Pass
-`includeDeleted()` to `find`, after the ID in `findById`, or before the
-predicates in `count` to include deleted rows in that query. Foreign targets
-still use active rows. Use `select<&Record::deleted_at>()` or `selectAll()`
+Normal reads, counts, and foreign loading use active rows. Chain
+`.includeDeleted()` on a `find()`, `findById(id)`, or `count()` builder to
+include deleted rows for that query. Foreign targets still use active rows. Use
+`.select<&Record::deleted_at>()` or `.selectAll()`
 to read the timestamp in a list query. Deleted rows retain their foreign
 references and unique values until physically removed.
 
 ### Run a transaction
+
+Pass an existing transaction as the first argument to `createMany` or
+`updateMany` to run the batch inside a savepoint. A failed batch rolls back
+its own changes. Validation and database errors propagate to the caller.
 
 Pass the transaction context to every DAO call inside the callback. The callback can use typed operations and bound SQL across DAOs on the same backend.
 

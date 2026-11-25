@@ -32,7 +32,19 @@ Prefer values for direct ownership and references for required borrows. Use `std
 
 - Define persistent fields in a snake_case aggregate with a static `table_name`. Wrap it in `DaoRecord<Fields>` and derive the entity DAO from `BaseDao<Derived, Record>`. Use field annotations for keys, constraints, indexes, defaults, and foreign references. See the [README database example](README.md#database-example).
 - Open the database backend once at startup and pass it to each DAO's async `init(database)`. Initialize parent DAOs before DAOs that reference them. Use the base DAO's coroutine CRUD methods and typed filters for ordinary queries. Keep custom SQL in the DAO, and bind runtime values through `executeSql`.
+- Build list queries with `dao.find()` or `dao.find(tx)` and execute them with `co_await … .collect()`. The default is 100 rows at offset 0. Set a different window with `.limit()` and `.offset()`. Use `.where<Member>(value)` for a typed filter, `.where(predicate)` for a composed predicate, and `.matching(filters)` for runtime `EqualityFilters`. Add projection, sorting, and foreign loading with `.select()`, `.selectAll()`, `.orderBy()`, and `.withForeign()`. List queries exclude soft-deleted rows unless you add `.includeDeleted()`.
+- Finish ID lookups and counts with `.collect()` too. Use `findById(id)` for an optional full record and `count()` for the total across all matching active rows. Pass a transaction as the first argument when needed. Both builders support `.includeDeleted()`.
+- Use `createMany(records)` and `updateMany(records)` for atomic batches. Pass the existing transaction first to scope the batch to a savepoint. Create returns keys in input order. Update returns false and rolls back the batch if any target is missing or soft-deleted.
 - Give each service its initialized DAO by value and keep business logic in the service. Register services in the server's `Services` container. Route handlers should validate requests, `co_await` service methods, and build responses. Keep database queries and persistence records inside the service and DAO layers.
+
+```cpp
+auto posts = co_await postDao.find()
+    .where<&SocialPost::author_id>(userId)
+    .select<&SocialPost::created_at>()
+    .orderBy<&SocialPost::created_at>(SortDirection::desc)
+    .limit(20)
+    .collect();
+```
 
 ## Testing
 

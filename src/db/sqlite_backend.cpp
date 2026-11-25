@@ -368,7 +368,7 @@ public:
         std::exception_ptr failure;
         try {
             co_await work(tx);
-            co_await detail::executeOn(connection, "COMMIT");
+            co_await detail::executeOn(client(), "COMMIT");
         } catch (...) {
             failure = std::current_exception();
         }
@@ -376,6 +376,33 @@ public:
             std::exception_ptr rollbackFailure;
             try {
                 co_await detail::executeOn(connection, "ROLLBACK");
+            } catch (...) {
+                usable_.store(false);
+                rollbackFailure = std::current_exception();
+            }
+            if (rollbackFailure) reportRollbackFailure(failure, rollbackFailure);
+            std::rethrow_exception(failure);
+        }
+    }
+
+    drogon::Task<> savepoint(const DaoTransaction& tx, BatchCallback work) override {
+        if (std::addressof(tx.backend()) != this) {
+            throw std::invalid_argument("DAO and transaction must use the same database backend");
+        }
+        const auto& connection = tx.client();
+        co_await detail::executeOn(connection, "SAVEPOINT app_dao_batch");
+        std::exception_ptr failure;
+        try {
+            co_await work(tx);
+            co_await detail::executeOn(connection, "RELEASE SAVEPOINT app_dao_batch");
+        } catch (...) {
+            failure = std::current_exception();
+        }
+        if (failure) {
+            std::exception_ptr rollbackFailure;
+            try {
+                co_await detail::executeOn(connection, "ROLLBACK TO SAVEPOINT app_dao_batch");
+                co_await detail::executeOn(connection, "RELEASE SAVEPOINT app_dao_batch");
             } catch (...) {
                 usable_.store(false);
                 rollbackFailure = std::current_exception();

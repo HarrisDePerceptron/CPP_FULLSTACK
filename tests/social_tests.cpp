@@ -126,7 +126,7 @@ TEST_CASE("The feed hides deleted content and a new like restores a deleted like
         const auto restored = co_await likes.set(post, bob, true);
         CHECK(restored.liked);
         CHECK(restored.like_count == 1);
-        CHECK(co_await likes.findById(like));
+        CHECK(co_await likes.findById(like).collect());
     });
 }
 

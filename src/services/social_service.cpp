@@ -41,27 +41,27 @@ drogon::Task<std::optional<PostView>> SocialService::view(std::int64_t viewer, s
 
 drogon::Task<std::optional<std::vector<PostView>>> SocialService::userPosts(
     std::int64_t viewer, std::int64_t author, std::int64_t page, const UserService& users) const {
-    if (!co_await users.dao().findById(author)) co_return std::nullopt;
+    if (!co_await users.dao().findById(author).collect()) co_return std::nullopt;
     co_return co_await posts_.feed(viewer, pageSize + 1, (page - 1) * pageSize, author);
 }
 
 drogon::Task<PostView> SocialService::post(std::int64_t user, std::string username, std::string text) const {
     text = validateText(std::move(text), 280);
     const auto id = co_await posts_.create({{user, text}});
-    const auto row = co_await posts_.findById(id);
+    const auto row = co_await posts_.findById(id).collect();
     co_return PostView{id, std::move(username), std::move(text),
                        detail::formatDaoDateTime(row->created_at.value()), 0, 0, false, {}};
 }
 
 drogon::Task<std::optional<std::vector<CommentView>>> SocialService::thread(
     std::int64_t post, std::int64_t page, const UserService& users) const {
-    if (!co_await posts_.findById(post)) co_return std::nullopt;
+    if (!co_await posts_.findById(post).collect()) co_return std::nullopt;
     co_return co_await comments_.thread(post, pageSize + 1, (page - 1) * pageSize, users.dao());
 }
 
 drogon::Task<std::optional<std::vector<CommentView>>> SocialService::olderComments(
     std::int64_t post, CommentCursor before, const UserService& users) const {
-    if (!co_await posts_.findById(post)) co_return std::nullopt;
+    if (!co_await posts_.findById(post).collect()) co_return std::nullopt;
     DaoDateTime beforeTime;
     try {
         beforeTime = detail::parseDaoDateTime(before.created_at);
@@ -74,16 +74,16 @@ drogon::Task<std::optional<std::vector<CommentView>>> SocialService::olderCommen
 drogon::Task<std::optional<CommentView>> SocialService::comment(
     std::int64_t post, std::int64_t user, std::string username, std::string text) const {
     text = validateText(std::move(text), 500);
-    if (!co_await posts_.findById(post)) co_return std::nullopt;
+    if (!co_await posts_.findById(post).collect()) co_return std::nullopt;
     const auto id = co_await comments_.create({{post, user, text}});
-    const auto row = co_await comments_.findById(id);
+    const auto row = co_await comments_.findById(id).collect();
     co_return CommentView{id, std::move(username), std::move(text),
                           detail::formatDaoDateTime(row->created_at.value())};
 }
 
 drogon::Task<std::optional<LikeView>> SocialService::like(
     std::int64_t post, std::int64_t user, bool liked) const {
-    if (!co_await posts_.findById(post)) co_return std::nullopt;
+    if (!co_await posts_.findById(post).collect()) co_return std::nullopt;
     co_return co_await likes_.set(post, user, liked);
 }
 

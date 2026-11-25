@@ -33,6 +33,8 @@ protected:
 
 using TransactionCallback = std::function<drogon::Task<>(DaoTransaction&)>;
 
+using BatchCallback = std::function<drogon::Task<>(const DaoTransaction&)>;
+
 using CompositeUniqueness = std::vector<std::vector<std::string>>;
 
 class DatabaseBackend {
@@ -44,6 +46,7 @@ public:
     virtual std::string containsText(std::string_view column, std::size_t index) const = 0;
     virtual std::string nullSafeEqual(std::string_view column, std::size_t index) const = 0;
     virtual drogon::Task<> transaction(TransactionCallback work) = 0;
+    virtual drogon::Task<> savepoint(const DaoTransaction& tx, BatchCallback work) = 0;
     virtual drogon::Task<> initializeTable(
         std::string table, std::vector<DatabaseColumn> columns, CompositeUniqueness composite) = 0;
     virtual std::optional<std::reference_wrapper<drogon::Mutex>> queryGate() const { return std::nullopt; }

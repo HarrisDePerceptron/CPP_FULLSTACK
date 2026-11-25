@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <concepts>
+#include <iterator>
 #include <map>
 #include <set>
 #include <tuple>
@@ -53,19 +54,7 @@ consteval bool validCompositeMembers() {
 
 }
 
-template <auto... Members>
-    requires (sizeof...(Members) > 0) && (std::is_member_object_pointer_v<decltype(Members)> && ...)
-auto select() { return detail::SelectFields<Members...>{}; }
-
 inline auto includeDeleted() { return detail::IncludeDeleted{}; }
-
-inline auto selectAll() { return detail::SelectAll{}; }
-
-template <auto Member>
-    requires std::is_member_object_pointer_v<decltype(Member)>
-auto orderBy(SortDirection direction = SortDirection::asc) {
-    return detail::OrderBy<Member>{direction};
-}
 
 template <auto... Members>
     requires (sizeof...(Members) >= 2) &&
@@ -92,29 +81,16 @@ class BaseDao {
         (Record::generatedId &&
          std::same_as<detail::DaoGeneratedKey<Fields, true>, typename detail::DaoPredicate<Member>::Record>);
 
-    static constexpr bool validModifier(std::type_identity<detail::IncludeDeleted>) { return true; }
-    static constexpr bool validModifier(...) { return false; }
-    static constexpr bool validModifier(std::type_identity<detail::SelectAll>) { return true; }
+    static constexpr bool validFilter(...) { return false; }
 
-    template <auto... Members>
-    static constexpr bool validModifier(std::type_identity<detail::SelectFields<Members...>>) {
-        return (recordMember<Members> && ...);
+    template <auto Member>
+    static constexpr bool validFilter(std::type_identity<detail::DaoPredicate<Member>>) {
+        return recordMember<Member>;
     }
-
-    template <auto Member>
-    static constexpr bool validModifier(std::type_identity<detail::OrderBy<Member>>) { return recordMember<Member>; }
-
-    template <auto Member>
-    static constexpr bool validModifier(std::type_identity<detail::DaoPredicate<Member>>) { return recordMember<Member>; }
 
     template <auto First, auto Second>
-    static constexpr bool validModifier(std::type_identity<detail::DaoTupleLess<First, Second>>) {
+    static constexpr bool validFilter(std::type_identity<detail::DaoTupleLess<First, Second>>) {
         return recordMember<First> && recordMember<Second>;
-    }
-
-    template <auto Member, typename Dao>
-    static constexpr bool validModifier(std::type_identity<detail::ForeignSelection<Member, Dao>>) {
-        return detail::ForeignSelectionFor<Member, Record, Dao>;
     }
 
 public:
@@ -136,49 +112,97 @@ public:
         std::vector<std::pair<std::string_view, detail::QueryValue>> entries_;
     };
 
-    drogon::Task<std::vector<Record>> findMatching(
-        std::int64_t limit, std::int64_t offset, EqualityFilters filters) const {
-        return findPage({}, limit, offset, std::move(filters));
+    template <typename... Modifiers>
+    class FindBuilder {
+    public:
+        FindBuilder limit(std::int64_t value) && {
+            limit_ = value;
+            return std::move(*this);
+        }
+
+        FindBuilder offset(std::int64_t value) && {
+            offset_ = value;
+            return std::move(*this);
+        }
+
+        template <auto Member, typename Value>
+            requires requires(Value&& value) { APP_NAMESPACE::where<Member>(std::forward<Value>(value)); } &&
+                     recordMember<Member>
+        auto where(Value&& value) && {
+            return std::move(*this).where(APP_NAMESPACE::where<Member>(std::forward<Value>(value)));
+        }
+
+        template <typename Predicate>
+            requires (validFilter(std::type_identity<Predicate>{}))
+        auto where(Predicate predicate) && {
+            return std::move(*this).append(std::move(predicate));
+        }
+
+        template <auto... Members>
+            requires (sizeof...(Members) > 0) &&
+                     (std::is_member_object_pointer_v<decltype(Members)> && ...) &&
+                     (recordMember<Members> && ...)
+        auto select() && {
+            return std::move(*this).append(detail::SelectFields<Members...>{});
+        }
+
+        auto selectAll() && { return std::move(*this).append(detail::SelectAll{}); }
+
+        template <auto Member>
+            requires std::is_member_object_pointer_v<decltype(Member)> && recordMember<Member>
+        auto orderBy(SortDirection direction = SortDirection::asc) && {
+            return std::move(*this).append(detail::OrderBy<Member>{direction});
+        }
+
+        auto includeDeleted() && { return std::move(*this).append(detail::IncludeDeleted{}); }
+
+        template <auto Member, typename Dao>
+            requires detail::ForeignSelectionFor<Member, Record, std::remove_cv_t<Dao>>
+        auto withForeign(Dao& dao) && {
+            return std::move(*this).append(APP_NAMESPACE::withForeign<Member>(dao));
+        }
+
+        auto matching(EqualityFilters filters) && {
+            return std::move(*this).append(std::move(filters));
+        }
+
+        drogon::Task<std::vector<Record>> collect() && {
+            return std::apply([&](auto&&... modifiers) {
+                return dao_.findPage(tx_, limit_, offset_, std::move(modifiers)...);
+            }, std::move(modifiers_));
+        }
+
+    private:
+        friend BaseDao;
+        template <typename...>
+        friend class FindBuilder;
+
+        FindBuilder(const BaseDao& dao, TransactionScope tx, std::int64_t limit,
+                    std::int64_t offset, std::tuple<Modifiers...> modifiers)
+            : dao_(dao), tx_(tx), limit_(limit), offset_(offset), modifiers_(std::move(modifiers)) {}
+
+        template <typename Modifier>
+        auto append(Modifier modifier) && {
+            return FindBuilder<Modifiers..., Modifier>(dao_, tx_, limit_, offset_,
+                std::tuple_cat(std::move(modifiers_), std::tuple{std::move(modifier)}));
+        }
+
+        const BaseDao& dao_;
+        TransactionScope tx_;
+        std::int64_t limit_;
+        std::int64_t offset_;
+        std::tuple<Modifiers...> modifiers_;
+    };
+
+    FindBuilder<> find() const & { return FindBuilder<>(*this, {}, 100, 0, {}); }
+    FindBuilder<> find(const DaoTransaction& tx) const & {
+        return FindBuilder<>(*this, std::cref(tx), 100, 0, {});
     }
+    FindBuilder<> find() const && = delete;
+    FindBuilder<> find(const DaoTransaction&) const && = delete;
 
     drogon::Task<> transaction(TransactionCallback work) const {
         return database_->transaction(std::move(work));
-    }
-
-
-    drogon::Task<std::vector<Record>> find(std::int64_t limit = 100, std::int64_t offset = 0) const {
-        return findPage({}, limit, offset);
-    }
-
-    template <typename... Modifiers>
-        requires (sizeof...(Modifiers) > 0) && (validModifier(std::type_identity<Modifiers>{}) && ...)
-    drogon::Task<std::vector<Record>> find(Modifiers... modifiers) const {
-        return findPage({}, 100, 0, std::move(modifiers)...);
-    }
-
-    template <typename... Modifiers>
-        requires (sizeof...(Modifiers) > 0) && (validModifier(std::type_identity<Modifiers>{}) && ...)
-    drogon::Task<std::vector<Record>> find(
-        std::int64_t limit, std::int64_t offset, Modifiers... modifiers) const {
-        return findPage({}, limit, offset, std::move(modifiers)...);
-    }
-
-    drogon::Task<std::vector<Record>> find(
-        const DaoTransaction& tx, std::int64_t limit = 100, std::int64_t offset = 0) const {
-        return findPage(std::cref(tx), limit, offset);
-    }
-
-    template <typename... Modifiers>
-        requires (sizeof...(Modifiers) > 0) && (validModifier(std::type_identity<Modifiers>{}) && ...)
-    drogon::Task<std::vector<Record>> find(const DaoTransaction& tx, Modifiers... modifiers) const {
-        return findPage(std::cref(tx), 100, 0, std::move(modifiers)...);
-    }
-
-    template <typename... Modifiers>
-        requires (sizeof...(Modifiers) > 0) && (validModifier(std::type_identity<Modifiers>{}) && ...)
-    drogon::Task<std::vector<Record>> find(
-        const DaoTransaction& tx, std::int64_t limit, std::int64_t offset, Modifiers... modifiers) const {
-        return findPage(std::cref(tx), limit, offset, std::move(modifiers)...);
     }
 
     template <bool Nullable>
@@ -192,44 +216,54 @@ public:
         return field.load(*this, tx);
     }
 
-    drogon::Task<std::optional<Record>> findById(Id id) const {
-        return readById({}, std::move(id));
+    template <typename... Selections>
+    class FindByIdBuilder {
+    public:
+        FindByIdBuilder includeDeleted() && {
+            include_ = true;
+            return std::move(*this);
+        }
+
+        template <auto Member, typename Dao>
+            requires detail::ForeignSelectionFor<Member, Record, std::remove_cv_t<Dao>>
+        auto withForeign(Dao& dao) && {
+            auto selection = APP_NAMESPACE::withForeign<Member>(dao);
+            return FindByIdBuilder<Selections..., decltype(selection)>(dao_, tx_, std::move(id_),
+                include_, std::tuple_cat(std::move(selections_), std::tuple{selection}));
+        }
+
+        drogon::Task<std::optional<Record>> collect() && {
+            return std::apply([&](auto... selections) {
+                return dao_.readWithForeign(tx_, std::move(id_), include_, selections...);
+            }, std::move(selections_));
+        }
+
+    private:
+        friend BaseDao;
+        template <typename...>
+        friend class FindByIdBuilder;
+
+        FindByIdBuilder(const BaseDao& dao, TransactionScope tx, Id id, bool include,
+                        std::tuple<Selections...> selections)
+            : dao_(dao), tx_(tx), id_(std::move(id)), include_(include), selections_(std::move(selections)) {}
+
+        const BaseDao& dao_;
+        TransactionScope tx_;
+        Id id_;
+        bool include_;
+        std::tuple<Selections...> selections_;
+    };
+
+    FindByIdBuilder<> findById(Id id) const & {
+        return FindByIdBuilder<>(*this, {}, std::move(id), false, {});
     }
 
-    drogon::Task<std::optional<Record>> findById(const DaoTransaction& tx, Id id) const {
-        return readById(std::cref(tx), std::move(id));
+    FindByIdBuilder<> findById(const DaoTransaction& tx, Id id) const & {
+        return FindByIdBuilder<>(*this, std::cref(tx), std::move(id), false, {});
     }
 
-    template <auto... Members, typename... TargetDaos>
-        requires (sizeof...(Members) > 0)
-            && (detail::ForeignSelectionFor<Members, Record, TargetDaos> && ...)
-    drogon::Task<std::optional<Record>> findById(
-        Id id, detail::ForeignSelection<Members, TargetDaos>... selections) const {
-        return readWithForeign({}, std::move(id), false, selections...);
-    }
-
-    template <auto... Members, typename... TargetDaos>
-        requires (sizeof...(Members) > 0)
-            && (detail::ForeignSelectionFor<Members, Record, TargetDaos> && ...)
-    drogon::Task<std::optional<Record>> findById(
-        const DaoTransaction& tx, Id id, detail::ForeignSelection<Members, TargetDaos>... selections) const {
-        return readWithForeign(std::cref(tx), std::move(id), false, selections...);
-    }
-
-    template <auto... Members, typename... TargetDaos>
-        requires (detail::ForeignSelectionFor<Members, Record, TargetDaos> && ...)
-    drogon::Task<std::optional<Record>> findById(
-        Id id, detail::IncludeDeleted, detail::ForeignSelection<Members, TargetDaos>... selections) const {
-        return readWithForeign({}, std::move(id), true, selections...);
-    }
-
-    template <auto... Members, typename... TargetDaos>
-        requires (detail::ForeignSelectionFor<Members, Record, TargetDaos> && ...)
-    drogon::Task<std::optional<Record>> findById(
-        const DaoTransaction& tx, Id id, detail::IncludeDeleted,
-        detail::ForeignSelection<Members, TargetDaos>... selections) const {
-        return readWithForeign(std::cref(tx), std::move(id), true, selections...);
-    }
+    FindByIdBuilder<> findById(Id) const && = delete;
+    FindByIdBuilder<> findById(const DaoTransaction&, Id) const && = delete;
 
     bool usesBackend(const DatabaseBackendPtr& database) const {
         return database_ == database;
@@ -249,6 +283,22 @@ public:
 
     drogon::Task<bool> update(const DaoTransaction& tx, Record record) const {
         return updateRecord(std::cref(tx), std::move(record));
+    }
+
+    drogon::Task<std::vector<Id>> createMany(std::vector<Record> records) const {
+        return createBatch({}, std::move(records));
+    }
+
+    drogon::Task<std::vector<Id>> createMany(const DaoTransaction& tx, std::vector<Record> records) const {
+        return createBatch(std::cref(tx), std::move(records));
+    }
+
+    drogon::Task<bool> updateMany(std::vector<Record> records) const {
+        return updateBatch({}, std::move(records));
+    }
+
+    drogon::Task<bool> updateMany(const DaoTransaction& tx, std::vector<Record> records) const {
+        return updateBatch(std::cref(tx), std::move(records));
     }
 
     drogon::Task<bool> deleteById(Id id) const {
@@ -275,30 +325,54 @@ public:
         return setDeleted(std::cref(tx), std::move(id), false);
     }
 
-    template <auto... Members>
-        requires (recordMember<Members> && ...)
-    drogon::Task<std::int64_t> count(detail::IncludeDeleted, detail::DaoPredicate<Members>... predicates) const {
-        return countRecords({}, true, std::move(predicates)...);
-    }
+    template <typename... Predicates>
+    class CountBuilder {
+    public:
+        CountBuilder includeDeleted() && {
+            include_ = true;
+            return std::move(*this);
+        }
 
-    template <auto... Members>
-        requires (recordMember<Members> && ...)
-    drogon::Task<std::int64_t> count(
-        const DaoTransaction& tx, detail::IncludeDeleted, detail::DaoPredicate<Members>... predicates) const {
-        return countRecords(std::cref(tx), true, std::move(predicates)...);
-    }
+        template <auto Member, typename Value>
+            requires requires(Value&& value) { APP_NAMESPACE::where<Member>(std::forward<Value>(value)); } &&
+                     recordMember<Member>
+        auto where(Value&& value) && {
+            return std::move(*this).where(APP_NAMESPACE::where<Member>(std::forward<Value>(value)));
+        }
 
-    template <auto... Members>
-        requires (sizeof...(Members) > 0) && (recordMember<Members> && ...)
-    drogon::Task<std::int64_t> count(detail::DaoPredicate<Members>... predicates) const {
-        return countRecords({}, false, std::move(predicates)...);
-    }
+        template <typename Predicate>
+            requires (validFilter(std::type_identity<Predicate>{}))
+        auto where(Predicate predicate) && {
+            return CountBuilder<Predicates..., Predicate>(dao_, tx_, include_,
+                std::tuple_cat(std::move(predicates_), std::tuple{std::move(predicate)}));
+        }
 
-    template <auto... Members>
-        requires (sizeof...(Members) > 0) && (recordMember<Members> && ...)
-    drogon::Task<std::int64_t> count(const DaoTransaction& tx, detail::DaoPredicate<Members>... predicates) const {
-        return countRecords(std::cref(tx), false, std::move(predicates)...);
+        drogon::Task<std::int64_t> collect() && {
+            return std::apply([&](auto&&... predicates) {
+                return dao_.countRecords(tx_, include_, std::move(predicates)...);
+            }, std::move(predicates_));
+        }
+
+    private:
+        friend BaseDao;
+        template <typename...>
+        friend class CountBuilder;
+
+        CountBuilder(const BaseDao& dao, TransactionScope tx, bool include, std::tuple<Predicates...> predicates)
+            : dao_(dao), tx_(tx), include_(include), predicates_(std::move(predicates)) {}
+
+        const BaseDao& dao_;
+        TransactionScope tx_;
+        bool include_;
+        std::tuple<Predicates...> predicates_;
+    };
+
+    CountBuilder<> count() const & { return CountBuilder<>(*this, {}, false, {}); }
+    CountBuilder<> count(const DaoTransaction& tx) const & {
+        return CountBuilder<>(*this, std::cref(tx), false, {});
     }
+    CountBuilder<> count() const && = delete;
+    CountBuilder<> count(const DaoTransaction&) const && = delete;
 
     // Use application-owned SQL and pass runtime values as bound parameters.
     template <typename... Args>
@@ -436,6 +510,37 @@ private:
         co_return result.affectedRows() != 0;
     }
 
+    drogon::Task<> writeBatch(TransactionScope tx, BatchCallback work) const {
+        if (tx) return database_->savepoint(tx->get(), std::move(work));
+        return database_->transaction(std::move(work));
+    }
+
+    drogon::Task<std::vector<Id>> createBatch(TransactionScope tx, std::vector<Record> records) const {
+        std::vector<Id> ids;
+        if (records.empty()) co_return ids;
+        ids.reserve(records.size());
+        co_await writeBatch(tx, [&](const DaoTransaction& batchTx) -> drogon::Task<> {
+            for (auto& record : records) ids.push_back(co_await create(batchTx, std::move(record)));
+        });
+        co_return ids;
+    }
+
+    struct UnmatchedBulkUpdate {};
+
+    drogon::Task<bool> updateBatch(TransactionScope tx, std::vector<Record> records) const {
+        if (records.empty()) co_return true;
+        try {
+            co_await writeBatch(tx, [&](const DaoTransaction& batchTx) -> drogon::Task<> {
+                for (auto& record : records) {
+                    if (!co_await update(batchTx, std::move(record))) throw UnmatchedBulkUpdate{};
+                }
+            });
+        } catch (const UnmatchedBulkUpdate&) {
+            co_return false;
+        }
+        co_return true;
+    }
+
     drogon::Task<bool> deleteRecord(TransactionScope tx, Id id) const {
         const auto result = co_await execute(tx, "DELETE FROM " + table_ + " WHERE " + key_ + " = " + parameter(1),
                                             ownArgument(std::move(id)));
@@ -451,8 +556,8 @@ private:
         co_return result.affectedRows() != 0;
     }
 
-    template <auto... Members>
-    drogon::Task<std::int64_t> countRecords(TransactionScope tx, bool include, detail::DaoPredicate<Members>... predicates) const {
+    template <typename... Predicates>
+    drogon::Task<std::int64_t> countRecords(TransactionScope tx, bool include, Predicates... predicates) const {
         std::string sql = "SELECT COUNT(*) FROM " + table_;
         std::vector<detail::QueryValue> values;
         appendWhere(sql, values, include, predicates...);
@@ -564,7 +669,9 @@ private:
     }
 
     static auto collect(FindQuery& query, EqualityFilters& filters) {
-        query.equality = std::move(filters);
+        auto& entries = query.equality.entries_;
+        entries.insert(entries.end(), std::make_move_iterator(filters.entries_.begin()),
+                       std::make_move_iterator(filters.entries_.end()));
         return std::tuple{};
     }
 

@@ -29,7 +29,7 @@ public:
     virtual ~CrudService() = default;
 
     virtual drogon::Task<std::vector<Response>> list(CrudPage page, Filters filters) const {
-        const auto rows = co_await dao_.findMatching(page.limit, page.offset, std::move(filters));
+        const auto rows = co_await dao_.find().limit(page.limit).offset(page.offset).matching(std::move(filters)).collect();
         std::vector<Response> result;
         result.reserve(rows.size());
         for (const auto& row : rows) result.push_back(Resource::toResponse(row));
@@ -37,7 +37,7 @@ public:
     }
 
     virtual drogon::Task<std::optional<Response>> get(Id id) const {
-        const auto row = co_await dao_.findById(std::move(id));
+        const auto row = co_await dao_.findById(std::move(id)).collect();
         if (!row) co_return std::nullopt;
         co_return Resource::toResponse(*row);
     }
@@ -46,7 +46,7 @@ public:
         std::optional<Response> result;
         co_await dao_.transaction([&](DaoTransaction& tx) -> drogon::Task<> {
             const auto id = co_await dao_.create(tx, Resource::makeRecord(std::move(input)));
-            const auto row = co_await dao_.findById(tx, id);
+            const auto row = co_await dao_.findById(tx, id).collect();
             if (!row) throw std::logic_error("Created row could not be read");
             result.emplace(Resource::toResponse(*row));
         });
@@ -56,11 +56,11 @@ public:
     virtual drogon::Task<std::optional<Response>> patch(Id id, Patch input) const {
         std::optional<Response> result;
         co_await dao_.transaction([&](DaoTransaction& tx) -> drogon::Task<> {
-            auto row = co_await dao_.findById(tx, id);
+            auto row = co_await dao_.findById(tx, id).collect();
             if (!row) co_return;
             Resource::applyPatch(*row, std::move(input));
             if (!co_await dao_.update(tx, std::move(*row))) throw std::logic_error("Patch target disappeared");
-            const auto updated = co_await dao_.findById(tx, id);
+            const auto updated = co_await dao_.findById(tx, id).collect();
             if (!updated) throw std::logic_error("Updated row could not be read");
             result.emplace(Resource::toResponse(*updated));
         });

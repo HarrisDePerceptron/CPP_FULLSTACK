@@ -10,7 +10,7 @@ UserDao::UserDao(DatabaseBackendPtr database)
     : BaseDao(std::move(database)) {}
 
 drogon::Task<std::optional<UserRecord>> UserDao::findByUsername(std::string username) const {
-    auto rows = co_await find(1, 0, selectAll(), where<&UserRecord::username>(std::move(username)));
+    auto rows = co_await find().limit(1).selectAll().where<&UserRecord::username>(std::move(username)).collect();
     if (rows.empty()) co_return std::nullopt;
     co_return std::move(rows.front());
 }
@@ -36,7 +36,7 @@ drogon::Task<bool> UserDao::insertAccount(std::string username, std::string pass
 }
 
 drogon::Task<bool> UserDao::hasDemo() const {
-    co_return (co_await count(includeDeleted(), where<&UserRecord::seed_key>("demo"))) != 0;
+    co_return (co_await count().includeDeleted().where<&UserRecord::seed_key>("demo").collect()) != 0;
 }
 
 drogon::Task<bool> UserDao::insertDemo(std::string username, std::string password_hash) const {

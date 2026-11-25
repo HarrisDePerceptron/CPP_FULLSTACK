@@ -34,9 +34,9 @@ public:
         record_.reset();
         if constexpr (Nullable) {
             if (!key_) co_return false;
-            record_ = co_await dao.findById(context..., *key_);
+            record_ = co_await dao.findById(context..., *key_).collect();
         } else {
-            record_ = co_await dao.findById(context..., key_);
+            record_ = co_await dao.findById(context..., key_).collect();
         }
         co_return record_.has_value();
     }
