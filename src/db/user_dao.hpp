@@ -31,15 +31,22 @@ class UserDao final : public BaseDao<UserDao, UserRecord> {
 public:
   static drogon::Task<UserDao> init(DatabaseBackendPtr database);
 
-  drogon::Task<std::optional<UserRecord>>
-  findByUsername(std::string username) const;
-  drogon::Task<std::vector<UserMatch>> search(std::string query) const;
-  drogon::Task<bool> hasDemo() const;
-  drogon::Task<bool> insertAccount(std::string username, std::string passwordHash) const;
+  drogon::Task<std::optional<UserRecord>> findByUsername(std::string username) const &;
+  drogon::Task<std::optional<UserRecord>> findByUsername(std::string username) const && = delete;
+  drogon::Task<std::vector<UserMatch>> search(std::string query) const &;
+  drogon::Task<std::vector<UserMatch>> search(std::string query) const && = delete;
+  drogon::Task<bool> hasDemo() const &;
+  drogon::Task<bool> hasDemo() const && = delete;
+  drogon::Task<bool> insertAccount(std::string username, std::string passwordHash) const &;
+  drogon::Task<bool> insertAccount(std::string username, std::string passwordHash) const && = delete;
   drogon::Task<bool> insertDemo(std::string username,
-                                std::string password_hash) const;
+                                std::string password_hash) const &;
+  drogon::Task<bool> insertDemo(std::string username,
+                                std::string password_hash) const && = delete;
   drogon::Task<> replaceDemo(std::string username,
-                             std::string password_hash) const;
+                             std::string password_hash) const &;
+  drogon::Task<> replaceDemo(std::string username,
+                             std::string password_hash) const && = delete;
 
 private:
   explicit UserDao(DatabaseBackendPtr database);

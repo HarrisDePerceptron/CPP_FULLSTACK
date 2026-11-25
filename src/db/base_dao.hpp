@@ -81,6 +81,84 @@ class BaseDao {
         (Record::generatedId &&
          std::same_as<detail::DaoGeneratedKey<Fields, true>, typename detail::DaoPredicate<Member>::Record>);
 
+    template <auto Member>
+    using FieldValue = typename detail::DaoMember<decltype(Member)>::Type;
+
+    template <auto Member>
+    using ModelField = std::remove_cvref_t<decltype(std::declval<Fields&>().*Member)>;
+
+    template <auto Member>
+    static constexpr bool modelMember = std::same_as<Fields, typename detail::DaoMember<decltype(Member)>::Record>;
+
+    template <auto Member>
+    static constexpr bool writableMember = [] {
+        if constexpr (modelMember<Member>) return !detail::FieldTraits<ModelField<Member>>::primary;
+        return false;
+    }();
+
+    template <auto Member>
+    static constexpr bool conflictMember = [] {
+        if constexpr (modelMember<Member>) {
+            using Traits = detail::FieldTraits<ModelField<Member>>;
+            return Traits::primary || Traits::unique;
+        }
+        return false;
+    }();
+
+    template <typename Builder>
+    class NamedFilters {
+        Builder&& builder() && { return static_cast<Builder&&>(*this); }
+
+    public:
+        template <auto Member, typename Value>
+            requires recordMember<Member> &&
+                     requires(Value&& value) { APP_NAMESPACE::where<Member>(APP_NAMESPACE::gt(std::forward<Value>(value))); }
+        auto whereGt(Value&& value) && {
+            return std::move(*this).builder().template where<Member>(APP_NAMESPACE::gt(std::forward<Value>(value)));
+        }
+
+        template <auto Member, typename Value>
+            requires recordMember<Member> &&
+                     requires(Value&& value) { APP_NAMESPACE::where<Member>(APP_NAMESPACE::gte(std::forward<Value>(value))); }
+        auto whereGte(Value&& value) && {
+            return std::move(*this).builder().template where<Member>(APP_NAMESPACE::gte(std::forward<Value>(value)));
+        }
+
+        template <auto Member, typename Value>
+            requires recordMember<Member> &&
+                     requires(Value&& value) { APP_NAMESPACE::where<Member>(APP_NAMESPACE::lt(std::forward<Value>(value))); }
+        auto whereLt(Value&& value) && {
+            return std::move(*this).builder().template where<Member>(APP_NAMESPACE::lt(std::forward<Value>(value)));
+        }
+
+        template <auto Member, typename Value>
+            requires recordMember<Member> &&
+                     requires(Value&& value) { APP_NAMESPACE::where<Member>(APP_NAMESPACE::lte(std::forward<Value>(value))); }
+        auto whereLte(Value&& value) && {
+            return std::move(*this).builder().template where<Member>(APP_NAMESPACE::lte(std::forward<Value>(value)));
+        }
+
+        template <auto Member, typename Value>
+            requires recordMember<Member> &&
+                     requires(Value&& value) { APP_NAMESPACE::where<Member>(APP_NAMESPACE::contains(std::forward<Value>(value))); }
+        auto whereContains(Value&& value) && {
+            return std::move(*this).builder().template where<Member>(APP_NAMESPACE::contains(std::forward<Value>(value)));
+        }
+
+        template <auto Member, std::ranges::input_range Range>
+            requires recordMember<Member> &&
+                     requires(Range&& values) { APP_NAMESPACE::where<Member>(APP_NAMESPACE::in(std::forward<Range>(values))); }
+        auto whereIn(Range&& values) && {
+            return std::move(*this).builder().template where<Member>(APP_NAMESPACE::in(std::forward<Range>(values)));
+        }
+
+        template <auto Member>
+            requires recordMember<Member>
+        auto whereIn(std::initializer_list<FieldValue<Member>> values) && {
+            return std::move(*this).builder().template where<Member>(APP_NAMESPACE::in(values));
+        }
+    };
+
     static constexpr bool validFilter(...) { return false; }
 
     template <auto Member>
@@ -113,7 +191,7 @@ public:
     };
 
     template <typename... Modifiers>
-    class FindBuilder {
+    class FindBuilder : public NamedFilters<FindBuilder<Modifiers...>> {
     public:
         FindBuilder limit(std::int64_t value) && {
             limit_ = value;
@@ -201,20 +279,28 @@ public:
     FindBuilder<> find() const && = delete;
     FindBuilder<> find(const DaoTransaction&) const && = delete;
 
-    drogon::Task<> transaction(TransactionCallback work) const {
+    drogon::Task<> transaction(TransactionCallback work) const & {
         return database_->transaction(std::move(work));
     }
 
+    drogon::Task<> transaction(TransactionCallback work) const && = delete;
+
     template <bool Nullable>
-    drogon::Task<bool> loadForeign(Foreign<Record, Nullable>& field) const {
+    drogon::Task<bool> loadForeign(Foreign<Record, Nullable>& field) const & {
         return field.load(*this);
     }
 
     template <bool Nullable>
-    drogon::Task<bool> loadForeign(const DaoTransaction& tx, Foreign<Record, Nullable>& field) const {
+    drogon::Task<bool> loadForeign(Foreign<Record, Nullable>& field) const && = delete;
+
+    template <bool Nullable>
+    drogon::Task<bool> loadForeign(const DaoTransaction& tx, Foreign<Record, Nullable>& field) const & {
         transactionClient(tx);
         return field.load(*this, tx);
     }
+
+    template <bool Nullable>
+    drogon::Task<bool> loadForeign(const DaoTransaction& tx, Foreign<Record, Nullable>& field) const && = delete;
 
     template <typename... Selections>
     class FindByIdBuilder {
@@ -269,64 +355,196 @@ public:
         return database_ == database;
     }
 
-    drogon::Task<Id> create(Record record) const {
+    drogon::Task<Id> create(Record record) const & {
         return createRecord({}, std::move(record));
     }
 
-    drogon::Task<Id> create(const DaoTransaction& tx, Record record) const {
+    drogon::Task<Id> create(Record record) const && = delete;
+
+    drogon::Task<Id> create(const DaoTransaction& tx, Record record) const & {
         return createRecord(std::cref(tx), std::move(record));
     }
 
-    drogon::Task<bool> update(Record record) const {
+    drogon::Task<Id> create(const DaoTransaction& tx, Record record) const && = delete;
+
+    template <auto Key>
+        requires (conflictMember<Key>)
+    drogon::Task<bool> insertIfAbsent(Record record) const & {
+        return insertAbsent<Key>({}, std::move(record));
+    }
+
+    template <auto Key>
+        requires (conflictMember<Key>)
+    drogon::Task<bool> insertIfAbsent(const DaoTransaction& tx, Record record) const & {
+        return insertAbsent<Key>(std::cref(tx), std::move(record));
+    }
+
+    template <auto Key>
+    drogon::Task<bool> insertIfAbsent(Record) const && = delete;
+    template <auto Key>
+    drogon::Task<bool> insertIfAbsent(const DaoTransaction&, Record) const && = delete;
+
+    template <auto Key, auto... Members>
+        requires (sizeof...(Members) > 0) && (conflictMember<Key>) &&
+                 (writableMember<Members> && ...) && (detail::validCompositeMembers<Key, Members...>())
+    drogon::Task<Id> upsert(Record record) const & {
+        return upsertRecord<Key, Members...>({}, std::move(record));
+    }
+
+    template <auto Key, auto... Members>
+        requires (sizeof...(Members) > 0) && (conflictMember<Key>) &&
+                 (writableMember<Members> && ...) && (detail::validCompositeMembers<Key, Members...>())
+    drogon::Task<Id> upsert(const DaoTransaction& tx, Record record) const & {
+        return upsertRecord<Key, Members...>(std::cref(tx), std::move(record));
+    }
+
+    template <auto Key, auto... Members>
+    drogon::Task<Id> upsert(Record) const && = delete;
+    template <auto Key, auto... Members>
+    drogon::Task<Id> upsert(const DaoTransaction&, Record) const && = delete;
+
+    class UpdateByIdBuilder {
+    public:
+        template <auto Member, typename Value>
+            requires writableMember<Member> && std::constructible_from<FieldValue<Member>, Value>
+        UpdateByIdBuilder set(Value&& value) && {
+            constexpr auto column = glz::get_name<Member>();
+            auto argument = queryValue(FieldValue<Member>(std::forward<Value>(value)));
+            auto existing = std::ranges::find(assignments_, column, &Assignment::column);
+            if (existing == assignments_.end()) assignments_.push_back({column, std::move(argument)});
+            else existing->value = std::move(argument);
+            return std::move(*this);
+        }
+
+        drogon::Task<bool> execute() && {
+            return dao_.patchRecord(tx_, std::move(id_), std::move(assignments_));
+        }
+
+    private:
+        friend BaseDao;
+        struct Assignment {
+            std::string_view column;
+            detail::QueryValue value;
+        };
+
+        UpdateByIdBuilder(const BaseDao& dao, TransactionScope tx, Id id)
+            : dao_(dao), tx_(tx), id_(std::move(id)) {}
+
+        const BaseDao& dao_;
+        TransactionScope tx_;
+        Id id_;
+        std::vector<Assignment> assignments_;
+    };
+
+    UpdateByIdBuilder updateById(Id id) const & {
+        return UpdateByIdBuilder(*this, {}, std::move(id));
+    }
+
+    UpdateByIdBuilder updateById(const DaoTransaction& tx, Id id) const & {
+        return UpdateByIdBuilder(*this, std::cref(tx), std::move(id));
+    }
+
+    UpdateByIdBuilder updateById(Id) const && = delete;
+    UpdateByIdBuilder updateById(const DaoTransaction&, Id) const && = delete;
+
+    drogon::Task<bool> update(Record record) const & {
         return updateRecord({}, std::move(record));
     }
 
-    drogon::Task<bool> update(const DaoTransaction& tx, Record record) const {
+    drogon::Task<bool> update(Record record) const && = delete;
+
+    drogon::Task<bool> update(const DaoTransaction& tx, Record record) const & {
         return updateRecord(std::cref(tx), std::move(record));
     }
 
-    drogon::Task<std::vector<Id>> createMany(std::vector<Record> records) const {
+    drogon::Task<bool> update(const DaoTransaction& tx, Record record) const && = delete;
+
+    drogon::Task<std::vector<Id>> createMany(std::vector<Record> records) const & {
         return createBatch({}, std::move(records));
     }
 
-    drogon::Task<std::vector<Id>> createMany(const DaoTransaction& tx, std::vector<Record> records) const {
+    drogon::Task<std::vector<Id>> createMany(std::vector<Record> records) const && = delete;
+
+    drogon::Task<std::vector<Id>> createMany(const DaoTransaction& tx, std::vector<Record> records) const & {
         return createBatch(std::cref(tx), std::move(records));
     }
 
-    drogon::Task<bool> updateMany(std::vector<Record> records) const {
+    drogon::Task<std::vector<Id>> createMany(const DaoTransaction& tx, std::vector<Record> records) const && = delete;
+
+    drogon::Task<bool> updateMany(std::vector<Record> records) const & {
         return updateBatch({}, std::move(records));
     }
 
-    drogon::Task<bool> updateMany(const DaoTransaction& tx, std::vector<Record> records) const {
+    drogon::Task<bool> updateMany(std::vector<Record> records) const && = delete;
+
+    drogon::Task<bool> updateMany(const DaoTransaction& tx, std::vector<Record> records) const & {
         return updateBatch(std::cref(tx), std::move(records));
     }
 
-    drogon::Task<bool> deleteById(Id id) const {
+    drogon::Task<bool> updateMany(const DaoTransaction& tx, std::vector<Record> records) const && = delete;
+
+    drogon::Task<bool> deleteById(Id id) const & {
         return deleteRecord({}, std::move(id));
     }
 
-    drogon::Task<bool> deleteById(const DaoTransaction& tx, Id id) const {
+    drogon::Task<bool> deleteById(Id id) const && = delete;
+
+    drogon::Task<bool> deleteById(const DaoTransaction& tx, Id id) const & {
         return deleteRecord(std::cref(tx), std::move(id));
     }
 
-    drogon::Task<bool> softDeleteById(Id id) const {
+    drogon::Task<bool> deleteById(const DaoTransaction& tx, Id id) const && = delete;
+
+    drogon::Task<bool> softDeleteById(Id id) const & {
         return setDeleted({}, std::move(id), true);
     }
 
-    drogon::Task<bool> softDeleteById(const DaoTransaction& tx, Id id) const {
+    drogon::Task<bool> softDeleteById(Id id) const && = delete;
+
+    drogon::Task<bool> softDeleteById(const DaoTransaction& tx, Id id) const & {
         return setDeleted(std::cref(tx), std::move(id), true);
     }
 
-    drogon::Task<bool> restoreById(Id id) const {
+    drogon::Task<bool> softDeleteById(const DaoTransaction& tx, Id id) const && = delete;
+
+    drogon::Task<bool> restoreById(Id id) const & {
         return setDeleted({}, std::move(id), false);
     }
 
-    drogon::Task<bool> restoreById(const DaoTransaction& tx, Id id) const {
+    drogon::Task<bool> restoreById(Id id) const && = delete;
+
+    drogon::Task<bool> restoreById(const DaoTransaction& tx, Id id) const & {
         return setDeleted(std::cref(tx), std::move(id), false);
     }
 
+    drogon::Task<bool> restoreById(const DaoTransaction& tx, Id id) const && = delete;
+
+    drogon::Task<std::int64_t> deleteMany(std::vector<Id> ids) const & {
+        return deleteBatch({}, std::move(ids), false);
+    }
+
+    drogon::Task<std::int64_t> deleteMany(std::vector<Id> ids) const && = delete;
+
+    drogon::Task<std::int64_t> deleteMany(const DaoTransaction& tx, std::vector<Id> ids) const & {
+        return deleteBatch(std::cref(tx), std::move(ids), false);
+    }
+
+    drogon::Task<std::int64_t> deleteMany(const DaoTransaction& tx, std::vector<Id> ids) const && = delete;
+
+    drogon::Task<std::int64_t> softDeleteMany(std::vector<Id> ids) const & {
+        return deleteBatch({}, std::move(ids), true);
+    }
+
+    drogon::Task<std::int64_t> softDeleteMany(std::vector<Id> ids) const && = delete;
+
+    drogon::Task<std::int64_t> softDeleteMany(const DaoTransaction& tx, std::vector<Id> ids) const & {
+        return deleteBatch(std::cref(tx), std::move(ids), true);
+    }
+
+    drogon::Task<std::int64_t> softDeleteMany(const DaoTransaction& tx, std::vector<Id> ids) const && = delete;
+
     template <typename... Predicates>
-    class CountBuilder {
+    class CountBuilder : public NamedFilters<CountBuilder<Predicates...>> {
     public:
         CountBuilder includeDeleted() && {
             include_ = true;
@@ -376,14 +594,20 @@ public:
 
     // Use application-owned SQL and pass runtime values as bound parameters.
     template <typename... Args>
-    drogon::Task<drogon::orm::Result> executeSql(std::string sql, Args&&... args) const {
+    drogon::Task<drogon::orm::Result> executeSql(std::string sql, Args&&... args) const & {
         return execute({}, std::move(sql), ownArgument(std::forward<Args>(args))...);
     }
 
     template <typename... Args>
-    drogon::Task<drogon::orm::Result> executeSql(const DaoTransaction& tx, std::string sql, Args&&... args) const {
+    drogon::Task<drogon::orm::Result> executeSql(std::string sql, Args&&... args) const && = delete;
+
+    template <typename... Args>
+    drogon::Task<drogon::orm::Result> executeSql(const DaoTransaction& tx, std::string sql, Args&&... args) const & {
         return execute(std::cref(tx), std::move(sql), ownArgument(std::forward<Args>(args))...);
     }
+
+    template <typename... Args>
+    drogon::Task<drogon::orm::Result> executeSql(const DaoTransaction& tx, std::string sql, Args&&... args) const && = delete;
 
 protected:
     static drogon::Task<Derived> finishInitialization(Derived dao) {
@@ -441,7 +665,6 @@ protected:
         insert_ = "INSERT INTO " + table_;
         if (columns.empty()) insert_ += " DEFAULT VALUES";
         else insert_ += " (" + columns + ") VALUES (" + placeholders + ")";
-        insert_ += " RETURNING " + key_;
     }
 
     std::string parameter(std::size_t index) const { return database_->parameter(index); }
@@ -500,8 +723,51 @@ private:
 
     drogon::Task<Id> createRecord(TransactionScope tx, Record record) const {
         checkId<true>(record);
-        const auto result = co_await writeRecord<true>(tx, insert_, record);
+        const auto result = co_await writeRecord<true>(tx, insert_ + " RETURNING " + key_, record);
         co_return detail::readScalar<Id>(result[0][0]);
+    }
+
+    template <auto Key>
+    static std::string conflictTarget() {
+        return " ON CONFLICT (" + detail::quoteIdentifier(glz::get_name<Key>()) + ")";
+    }
+
+    template <auto Key>
+    drogon::Task<bool> insertAbsent(TransactionScope tx, Record record) const {
+        checkId<true>(record);
+        const auto result = co_await writeRecord<true>(tx, insert_ + conflictTarget<Key>() + " DO NOTHING", record);
+        co_return result.affectedRows() != 0;
+    }
+
+    template <auto Key, auto... Members>
+    drogon::Task<Id> upsertRecord(TransactionScope tx, Record record) const {
+        checkId<true>(record);
+        std::string assignments;
+        const auto add = [&](std::string_view name) {
+            auto column = detail::quoteIdentifier(name);
+            appendColumn(assignments, column + " = excluded." + column);
+        };
+        (add(glz::get_name<Members>()), ...);
+        const auto result = co_await writeRecord<true>(tx, insert_ + conflictTarget<Key>() +
+            " DO UPDATE SET " + assignments + " RETURNING " + key_, record);
+        co_return detail::readScalar<Id>(result[0][0]);
+    }
+
+    drogon::Task<bool> patchRecord(TransactionScope tx, Id id,
+                                 std::vector<typename UpdateByIdBuilder::Assignment> fields) const {
+        if (fields.empty()) throw std::invalid_argument("updateById requires at least one field");
+        std::string assignments;
+        std::vector<detail::QueryValue> values;
+        values.reserve(fields.size() + 1);
+        for (auto& field : fields) {
+            values.push_back(std::move(field.value));
+            appendColumn(assignments, detail::quoteIdentifier(field.column) + " = " + parameter(values.size()));
+        }
+        values.push_back(queryValue(id));
+        auto sql = "UPDATE " + table_ + " SET " + assignments +
+            " WHERE " + key_ + " = " + parameter(values.size()) + " AND deleted_at IS NULL";
+        const auto result = co_await executeBound(tx, std::move(sql), std::move(values));
+        co_return result.affectedRows() != 0;
     }
 
     drogon::Task<bool> updateRecord(TransactionScope tx, Record record) const {
@@ -539,6 +805,19 @@ private:
             co_return false;
         }
         co_return true;
+    }
+
+    drogon::Task<std::int64_t> deleteBatch(TransactionScope tx, std::vector<Id> ids, bool soft) const {
+        std::int64_t changed = 0;
+        if (ids.empty()) co_return changed;
+        co_await writeBatch(tx, [&](const DaoTransaction& batchTx) -> drogon::Task<> {
+            for (auto& id : ids) {
+                const auto deleted = soft ? co_await softDeleteById(batchTx, std::move(id))
+                                          : co_await deleteById(batchTx, std::move(id));
+                if (deleted) ++changed;
+            }
+        });
+        co_return changed;
     }
 
     drogon::Task<bool> deleteRecord(TransactionScope tx, Id id) const {

@@ -9,13 +9,13 @@ drogon::Task<UserDao> UserDao::init(DatabaseBackendPtr database) {
 UserDao::UserDao(DatabaseBackendPtr database)
     : BaseDao(std::move(database)) {}
 
-drogon::Task<std::optional<UserRecord>> UserDao::findByUsername(std::string username) const {
+drogon::Task<std::optional<UserRecord>> UserDao::findByUsername(std::string username) const & {
     auto rows = co_await find().limit(1).selectAll().where<&UserRecord::username>(std::move(username)).collect();
     if (rows.empty()) co_return std::nullopt;
     co_return std::move(rows.front());
 }
 
-drogon::Task<std::vector<UserMatch>> UserDao::search(std::string query) const {
+drogon::Task<std::vector<UserMatch>> UserDao::search(std::string query) const & {
     const auto rows = co_await executeSql(
         "SELECT id, username FROM users WHERE deleted_at IS NULL AND instr(lower(username), lower(?1)) > 0 "
         "ORDER BY CASE WHEN lower(username) = lower(?1) THEN 0 "
@@ -28,30 +28,21 @@ drogon::Task<std::vector<UserMatch>> UserDao::search(std::string query) const {
     co_return result;
 }
 
-drogon::Task<bool> UserDao::insertAccount(std::string username, std::string passwordHash) const {
-    const auto result = co_await executeSql(
-        "INSERT INTO users (username, password_hash) VALUES (?, ?) "
-        "ON CONFLICT(username) DO NOTHING", std::move(username), std::move(passwordHash));
-    co_return result.affectedRows() == 1;
+drogon::Task<bool> UserDao::insertAccount(std::string username, std::string passwordHash) const & {
+    return insertIfAbsent<&UserRecord::username>({{std::move(username), std::move(passwordHash)}});
 }
 
-drogon::Task<bool> UserDao::hasDemo() const {
+drogon::Task<bool> UserDao::hasDemo() const & {
     co_return (co_await count().includeDeleted().where<&UserRecord::seed_key>("demo").collect()) != 0;
 }
 
-drogon::Task<bool> UserDao::insertDemo(std::string username, std::string password_hash) const {
-    const auto result = co_await executeSql(
-        "INSERT INTO users (username, password_hash, seed_key) "
-        "VALUES (" + parameter(1) + ", " + parameter(2) + ", 'demo') ON CONFLICT(seed_key) DO NOTHING",
-        std::move(username), std::move(password_hash));
-    co_return result.affectedRows() == 1;
+drogon::Task<bool> UserDao::insertDemo(std::string username, std::string password_hash) const & {
+    return insertIfAbsent<&UserRecord::seed_key>({{std::move(username), std::move(password_hash), "demo"}});
 }
 
-drogon::Task<> UserDao::replaceDemo(std::string username, std::string password_hash) const {
-    co_await executeSql("INSERT INTO users (username, password_hash, seed_key) "
-                        "VALUES (" + parameter(1) + ", " + parameter(2) + ", 'demo') ON CONFLICT(seed_key) DO UPDATE SET "
-                        "username = excluded.username, password_hash = excluded.password_hash",
-                        std::move(username), std::move(password_hash));
+drogon::Task<> UserDao::replaceDemo(std::string username, std::string password_hash) const & {
+    co_await upsert<&UserRecord::seed_key, &UserRecord::username, &UserRecord::password_hash>(
+        {{std::move(username), std::move(password_hash), "demo"}});
 }
 
 }

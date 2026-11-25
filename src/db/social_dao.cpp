@@ -15,11 +15,11 @@ drogon::Task<SocialLikeDao> SocialLikeDao::init(DatabaseBackendPtr database) {
 }
 
 drogon::Task<std::vector<PostView>> SocialPostDao::feed(
-    std::int64_t user, std::int64_t limit, std::int64_t offset, std::optional<std::int64_t> author) const {
+    std::int64_t user, std::int64_t limit, std::int64_t offset, std::optional<std::int64_t> author) const & {
     co_return co_await readViews(user, limit, offset, author ? " AND p.author_id = ?4" : "", author.value_or(0));
 }
 
-drogon::Task<std::optional<PostView>> SocialPostDao::view(std::int64_t user, std::int64_t post) const {
+drogon::Task<std::optional<PostView>> SocialPostDao::view(std::int64_t user, std::int64_t post) const & {
     auto rows = co_await readViews(user, 1, 0, " AND p.id = ?4", post);
     if (rows.empty()) co_return std::nullopt;
     co_return std::move(rows.front());
@@ -56,7 +56,7 @@ drogon::Task<std::vector<PostView>> SocialPostDao::readViews(
     co_return result;
 }
 
-drogon::Task<std::vector<PostMatch>> SocialPostDao::search(std::string query) const {
+drogon::Task<std::vector<PostMatch>> SocialPostDao::search(std::string query) const & {
     const auto rows = co_await executeSql(
         "SELECT p.id, COALESCE(u.username, 'Deleted user'), p.text "
         "FROM social_posts p LEFT JOIN users u ON u.id = p.author_id AND u.deleted_at IS NULL "
@@ -87,7 +87,7 @@ std::vector<CommentView> commentViews(const std::vector<SocialComment>& rows) {
 }
 
 drogon::Task<std::vector<CommentView>> SocialCommentDao::thread(
-    std::int64_t post, std::int64_t limit, std::int64_t offset, const UserDao& users) const {
+    std::int64_t post, std::int64_t limit, std::int64_t offset, const UserDao& users) const & {
     const auto rows = co_await find().limit(limit).offset(offset)
         .select<&SocialComment::created_at>()
         .where<&SocialComment::post_id>(post)
@@ -100,7 +100,7 @@ drogon::Task<std::vector<CommentView>> SocialCommentDao::thread(
 
 drogon::Task<std::vector<CommentView>> SocialCommentDao::older(
     std::int64_t post, DaoDateTime beforeTime, std::int64_t beforeId,
-    std::int64_t limit, const UserDao& users) const {
+    std::int64_t limit, const UserDao& users) const & {
     const auto rows = co_await find().limit(limit)
         .select<&SocialComment::created_at>()
         .where<&SocialComment::post_id>(post)
@@ -112,7 +112,7 @@ drogon::Task<std::vector<CommentView>> SocialCommentDao::older(
     co_return commentViews(rows);
 }
 
-drogon::Task<LikeView> SocialLikeDao::set(std::int64_t post, std::int64_t user, bool liked) const {
+drogon::Task<LikeView> SocialLikeDao::set(std::int64_t post, std::int64_t user, bool liked) const & {
     LikeView result{};
     co_await transaction([&](DaoTransaction& tx) -> drogon::Task<> {
         const auto existing = co_await find(tx).limit(1).includeDeleted()

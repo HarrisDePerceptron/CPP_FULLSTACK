@@ -179,13 +179,20 @@ drogon::Task<> databaseExample() {
 | `find().collect()` | Defaults to 100 rows at offset 0. Returns the key and required fields, sorted by newest update when timestamps are enabled and by primary key otherwise. Use `.select<...>()` or `.selectAll()` for nullable fields, and `.orderBy<Member>(SortDirection::desc)` for descending order. |
 | `findById(id).collect()` | Returns an optional full record. Chain `.withForeign<Member>(target_dao)` to load selected related records. |
 | `update(record)` | Updates by primary key and preserves fields that the query omitted. A loaded nullable field set to `std::nullopt` clears the value. |
+| `updateById(id).set<Member>(value).execute()` | Updates only assigned fields. Use `std::nullopt` to clear a nullable field. Returns false for missing and soft-deleted rows. |
 | `createMany(records)` | Inserts the batch atomically and returns keys in input order. |
 | `updateMany(records)` | Updates the batch atomically. Returns false and rolls back if a row is missing or soft-deleted. |
 | `deleteById(id)` | Deletes by primary key and reports whether a row was deleted. |
+| `deleteMany(ids)`, `softDeleteMany(ids)` | Delete by primary key atomically and return the number of rows changed. |
+| `insertIfAbsent<Key>(record)`, `upsert<Key, Members...>(record)` | Handle conflicts on a declared unique field or explicit primary key. Insert-if-absent returns whether it inserted. Upsert updates only the listed fields on conflict and returns the row's key. |
 | `count().where<Member>(value).collect()` | Counts matches across all pages. Omit filters to count all active rows. |
 | `executeSql(sql, args...)` | Runs custom, backend-specific SQL with bound arguments. |
 
-`where<Member>(value)` means equality. Use `eq`, `gt`, `gte`, `lt`, `lte`, `in`, or `contains` to name an operator. Separate filters combine with `AND`. `contains` matches literal, case-sensitive text. `negate(where<...>(...))` includes rows with `NULL` when the original filter excludes them.
+`.where<Member>(value)` means equality. Both `find()` and `count()` support
+`.whereGt`, `.whereGte`, `.whereLt`, `.whereLte`, `.whereIn`, and
+`.whereContains`. For example, use `.whereIn<&TaskRecord::id>({1, 2})` for
+membership. Separate filters combine with `AND`. Contains matches literal,
+case-sensitive text. Pass a reusable or negated predicate to `.where(predicate)`.
 
 ### Declare a unique pair
 
@@ -247,9 +254,10 @@ references and unique values until physically removed.
 
 ### Run a transaction
 
-Pass an existing transaction as the first argument to `createMany` or
-`updateMany` to run the batch inside a savepoint. A failed batch rolls back
-its own changes. Validation and database errors propagate to the caller.
+Pass an existing transaction as the first argument to a bulk write to run the
+batch inside a savepoint. A failed batch rolls back its own changes. Validation
+and database errors propagate to the caller. Keep the DAO and any borrowed
+transaction alive until the awaited operation completes.
 
 Pass the transaction context to every DAO call inside the callback. The callback can use typed operations and bound SQL across DAOs on the same backend.
 

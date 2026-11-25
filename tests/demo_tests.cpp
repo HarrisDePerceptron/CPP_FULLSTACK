@@ -171,7 +171,7 @@ concept SupportsFind = requires(const Dao& dao, Filter filter) { dao.find().wher
 
 static_assert(SupportsWhere<&UserRecord::username, std::string>);
 static_assert(!SupportsWhere<&UserRecord::username, int>);
-static_assert(!SupportsWhere<&UserDao::hasDemo, int>);
+static_assert(!SupportsWhere<static_cast<drogon::Task<bool> (UserDao::*)() const &>(&UserDao::hasDemo), int>);
 static_assert(!SupportsFind<UserDao, decltype(where<&SampleRow::count>(1))>);
 
 template <typename Dao>
@@ -972,6 +972,110 @@ TEST_CASE("A failed bulk savepoint preserves earlier and later outer transaction
     CHECK_FALSE(drogon::sync_wait(users.findByUsername("rolled back")));
     CHECK(drogon::sync_wait(users.findByUsername("owner"))->password_hash == "committed");
     CHECK(drogon::sync_wait(users.findByUsername("later")));
+}
+
+template <typename Dao>
+concept TemporaryDaoWrites = requires(Dao&& dao) { std::move(dao).create({{"alice", "hash"}}); };
+
+template <typename Dao>
+concept TemporaryDaoSql = requires(Dao&& dao) { std::move(dao).executeSql("SELECT 1"); };
+
+template <auto Member>
+concept UserPatchable = requires(const UserDao& dao) { dao.updateById(1).set<Member>(1); };
+
+template <auto Member>
+concept UserConflictTarget = requires(const UserDao& dao) {
+    dao.insertIfAbsent<Member>({{"user", "hash"}});
+};
+
+static_assert(!TemporaryDaoWrites<UserDao>);
+static_assert(!TemporaryDaoSql<UserDao>);
+static_assert(!UserPatchable<&UserRecord::id>);
+static_assert(!UserPatchable<&UserRecord::created_at>);
+static_assert(!UserConflictTarget<&UserRecord::password_hash>);
+static_assert(UserConflictTarget<&UserRecord::username>);
+
+TEST_CASE("Named filters support ranges and nullable brace lists on find and count", "[users]") {
+    const auto users = drogon::sync_wait(UserDao::init(openTestDatabase(":memory:")));
+    const auto alice = drogon::sync_wait(users.create({{"alice", "hash", "demo"}}));
+    const auto bob = drogon::sync_wait(users.create({{"bob", "hash"}}));
+    const auto rows = drogon::sync_wait(users.find().whereIn<&UserRecord::id>({alice, bob})
+        .whereGte<&UserRecord::id>(alice).whereLt<&UserRecord::id>(bob)
+        .whereContains<&UserRecord::username>("lic").collect());
+    REQUIRE(rows.size() == 1);
+    CHECK(rows.front().id == alice);
+    const std::array ids{alice, bob};
+    CHECK(drogon::sync_wait(users.count().whereIn<&UserRecord::id>(ids)
+        .whereIn<&UserRecord::seed_key>({std::nullopt, "demo"})
+        .whereGt<&UserRecord::id>(alice).whereLte<&UserRecord::id>(bob).collect()) == 1);
+    CHECK(drogon::sync_wait(users.count().whereIn<&UserRecord::id>({}).collect()) == 0);
+}
+
+TEST_CASE("Partial updates write only assigned fields and clear nullable values", "[users]") {
+    const auto users = drogon::sync_wait(UserDao::init(openTestDatabase(":memory:")));
+    const auto id = drogon::sync_wait(users.create({{"alice", "original", "demo"}}));
+    auto patch = users.updateById(id).set<&UserRecord::password_hash>("ignored")
+        .set<&UserRecord::password_hash>("new").set<&UserRecord::seed_key>(std::nullopt).execute();
+    REQUIRE(drogon::sync_wait(std::move(patch)));
+    const auto row = drogon::sync_wait(users.findById(id).collect());
+    REQUIRE(row);
+    CHECK(row->username.value == "alice");
+    CHECK(row->password_hash == "new");
+    CHECK_FALSE(row->seed_key.value);
+    CHECK_THROWS_AS(drogon::sync_wait(users.updateById(id).execute()), std::invalid_argument);
+    REQUIRE(drogon::sync_wait(users.softDeleteById(id)));
+    CHECK_FALSE(drogon::sync_wait(users.updateById(id).set<&UserRecord::password_hash>("late").execute()));
+}
+
+TEST_CASE("Typed conflict writes retain the row key and deletion state", "[users]") {
+    const auto users = drogon::sync_wait(UserDao::init(openTestDatabase(":memory:")));
+    REQUIRE(drogon::sync_wait(users.insertIfAbsent<&UserRecord::username>({{"alice", "hash", "demo"}})));
+    CHECK_FALSE(drogon::sync_wait(users.insertIfAbsent<&UserRecord::username>({{"alice", "ignored"}})));
+    CHECK_THROWS(drogon::sync_wait(users.insertIfAbsent<&UserRecord::username>({{"other", "hash", "demo"}})));
+    const auto current = drogon::sync_wait(users.findByUsername("alice"));
+    REQUIRE(current);
+    const auto id = current->id.value();
+    REQUIRE(drogon::sync_wait(users.softDeleteById(id)));
+    CHECK(drogon::sync_wait(users.upsert<&UserRecord::seed_key, &UserRecord::password_hash>(
+        {{"untouched", "changed", "demo"}})) == id);
+    const auto deleted = drogon::sync_wait(users.findById(id).includeDeleted().collect());
+    REQUIRE(deleted);
+    CHECK(deleted->deleted_at);
+    CHECK(deleted->username.value == "alice");
+    CHECK(deleted->password_hash == "changed");
+}
+
+TEST_CASE("Bulk deletion counts changed IDs once in hard and soft modes", "[users]") {
+    const auto users = drogon::sync_wait(UserDao::init(openTestDatabase(":memory:")));
+    const auto ids = runOnEventLoop(users.createMany({{{"alice", "hash"}}, {{"bob", "hash"}}}));
+    REQUIRE(ids.size() == 2);
+    CHECK(runOnEventLoop(users.softDeleteMany({ids[0], ids[0], ids[1] + 100})) == 1);
+    CHECK(runOnEventLoop(users.softDeleteMany({ids[0]})) == 0);
+    const auto deleted = drogon::sync_wait(users.findById(ids[0]).includeDeleted().collect());
+    REQUIRE(deleted);
+    REQUIRE(deleted->deleted_at);
+    CHECK(deleted->updated_at == deleted->deleted_at);
+    CHECK(runOnEventLoop(users.deleteMany({ids[0], ids[1], ids[1], ids[1] + 100})) == 2);
+    CHECK(runOnEventLoop(users.deleteMany({})) == 0);
+    CHECK(runOnEventLoop(users.softDeleteMany({})) == 0);
+    CHECK(drogon::sync_wait(users.count().includeDeleted().collect()) == 0);
+}
+
+TEST_CASE("A foreign-key failure rolls back bulk deletion without discarding the outer transaction", "[users]") {
+    const auto database = openTestDatabase(":memory:");
+    const auto users = drogon::sync_wait(UserDao::init(database));
+    const auto reviewers = drogon::sync_wait(IndexedDao::init(database));
+    const auto posts = drogon::sync_wait(PostDao::init(database));
+    runOnEventLoop(database->transaction([&](DaoTransaction& tx) -> drogon::Task<> {
+        const auto first = co_await users.create(tx, {{"first", "hash"}});
+        const auto referenced = co_await users.create(tx, {{"author", "hash"}});
+        co_await posts.create(tx, {{"depends on author", referenced, {}}});
+        CHECK_THROWS(co_await users.deleteMany(tx, {first, referenced}));
+        CHECK(co_await users.findById(tx, first).collect());
+        CHECK((co_await users.softDeleteMany(tx, {referenced})) == 1);
+    }));
+    CHECK(drogon::sync_wait(users.count().includeDeleted().collect()) == 2);
+    CHECK(drogon::sync_wait(users.count().collect()) == 1);
 }
 
 TEST_CASE("A soft-deleted demo account still counts as existing", "[users]") {
