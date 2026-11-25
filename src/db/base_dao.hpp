@@ -100,6 +100,32 @@ class BaseDao {
 public:
     using RecordType = Record;
 
+    class EqualityFilters {
+    public:
+        template <auto Member, typename Value>
+            requires std::is_member_object_pointer_v<decltype(Member)> &&
+                     (recordMember<Member>) && requires(Value value) { where<Member>(value); }
+        void equal(Value value) {
+            const auto predicate = where<Member>(std::move(value));
+            using FieldValue = typename detail::DaoPredicate<Member>::Value;
+            entries_.emplace_back(predicate.name, queryValue(static_cast<FieldValue>(predicate.values.front())));
+        }
+
+    private:
+        friend BaseDao;
+        std::vector<std::pair<std::string_view, detail::QueryValue>> entries_;
+    };
+
+    drogon::Task<std::vector<Record>> findMatching(
+        std::int64_t limit, std::int64_t offset, EqualityFilters filters) const {
+        return findPage({}, limit, offset, std::move(filters));
+    }
+
+    drogon::Task<> transaction(TransactionCallback work) const {
+        return database_->transaction(std::move(work));
+    }
+
+
     drogon::Task<std::vector<Record>> find(std::int64_t limit = 100, std::int64_t offset = 0) const {
         return findPage({}, limit, offset);
     }
@@ -441,6 +467,7 @@ private:
     }
 
     struct FindQuery {
+        EqualityFilters equality;
         std::vector<std::string_view> selected;
         std::vector<std::pair<std::string_view, SortDirection>> ordering;
         bool all = false;
@@ -455,6 +482,11 @@ private:
         if (!Options.timestamps && timestampName(name)) {
             throw std::invalid_argument("timestamp queries require timestamps to be enabled");
         }
+    }
+
+    static auto collect(FindQuery& query, EqualityFilters& filters) {
+        query.equality = std::move(filters);
+        return std::tuple{};
     }
 
     static auto collect(FindQuery& query, detail::SelectAll) {
@@ -517,6 +549,12 @@ private:
         }
         std::vector<detail::QueryValue> values;
         std::apply([&](const auto&... predicates) { appendWhere(sql, values, predicates...); }, predicates);
+        for (auto& [name, value] : query.equality.entries_) {
+            requireEnabledColumn(name);
+            sql += values.empty() ? " WHERE " : " AND ";
+            values.push_back(std::move(value));
+            sql += database_->nullSafeEqual(detail::quoteIdentifier(name), values.size());
+        }
         sql += " ORDER BY " + ordering + " LIMIT " + parameter(values.size() + 1) +
                " OFFSET " + parameter(values.size() + 2);
         values.emplace_back(limit);

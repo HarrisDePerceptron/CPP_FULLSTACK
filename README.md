@@ -239,3 +239,69 @@ Edit [config.json](config.json) to change the listener or demo credentials. The 
 - Keep route handlers small. Delegate persistence and outbound calls, use `co_await` for asynchronous work, `jsonResponse` for typed JSON replies, and `std::println` for console output.
 - After editing a view or Tailwind source, run `npm ci` and `npm run build:css` with Node.js installed. Include the regenerated `public/demo.css` in the change.
 - Keep `.env`, local databases, and runtime uploads out of commits. See [AGENTS.md](AGENTS.md) for the full repository guidelines.
+
+## CRUD services and routes
+
+Use `CrudService<Dao, Resource>` for resources with a standard lifecycle. Give
+the service an initialized DAO and mount its router during server startup.
+
+### Mount a todo router
+
+Assume `TodoDao` stores `title` and `done`, and `TodoResource` defines the
+public JSON fields and allows filtering by `done`. In your startup coroutine,
+mount the routes before calling `server.run()`.
+
+```cpp
+using TodoService = CrudService<TodoDao, TodoResource>;
+using TodoRouter = CrudRouter<TodoService>;
+
+auto dao = co_await TodoDao::init(database);
+auto service = std::make_shared<TodoService>(std::move(dao));
+auto router = std::make_shared<TodoRouter>(service);
+
+TodoRouter::mount(server, "/api/todos", router);
+```
+
+| Request | Behavior |
+| --- | --- |
+| `POST /api/todos` with `{"title":"Buy milk"}` | Creates a todo and returns it with `201`. |
+| `GET /api/todos?done=false&limit=10` | Lists up to 10 open todos. |
+| `GET /api/todos/1` | Fetches todo `1`. |
+| `PATCH /api/todos/1` with `{"done":true}` | Marks it complete and preserves the title. |
+| `DELETE /api/todos/1` | Deletes the todo and returns an empty result. |
+
+A successful PATCH returns a single item in the result array.
+
+```json
+{"result":[{"id":1,"title":"Buy milk","done":true}],"error":"","message":""}
+```
+
+Pass `CrudMethods{.remove = false}` as the router's second constructor argument
+to disable deletion. A disabled method returns `405` with an `Allow` header.
+Pass middleware names as the fourth argument to `mount` to protect the routes.
+Errors use the same JSON shape with an empty result and an error string.
+
+### Define and customize the resource
+
+`TodoResource` supplies the public API policy through these DTOs and static functions.
+
+| Policy member | Purpose |
+| --- | --- |
+| `Response` and `toResponse(const TodoRecord&)` | Return fields clients may read in a Glaze-serializable DTO. |
+| `Create`, `parseCreate(const Json::Value&)`, and `makeRecord(Create)` | Validate a POST object, reject unknown fields, and build the new record. |
+| `Patch`, `parsePatch(const Json::Value&)`, and `applyPatch(TodoRecord&, Patch)` | Validate writable fields and apply only supplied changes. |
+| `addFilter(TodoDao::EqualityFilters&, std::string_view, std::string)` | Map each allowed query key to a typed equality filter and reject unknown keys. |
+| Optional `parseId(std::string_view)` | Validate resource-specific ID formats. Generated integer IDs use positive decimal values by default. |
+
+For example, after validating that `done` is `true` or `false`, use
+`filters.equal<&TodoFields::done>(value == "true")`. Throw
+`CrudValidationError` for invalid client input. For a nullable PATCH field, an
+outer optional can track whether the client supplied the field and an inner
+optional can represent its value or explicit null. Leave IDs and timestamps out
+of the writable PATCH mapping. See [the widget policy](tests/crud_tests.cpp)
+for a complete example.
+
+Derive from the service and override `list`, `get`, `create`, `patch`, or
+`remove` for business rules. Derive from the router to override the same
+operation hooks when behavior needs access to the HTTP request. Keep response
+formatting and method restrictions in the shared dispatcher.

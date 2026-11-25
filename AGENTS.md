@@ -36,7 +36,10 @@ Prefer values for direct ownership and references for required borrows. Use `std
 
 ## Testing
 
-Run `xmake test` to run Catch2. Name test files `*_tests.cpp` and describe observable behavior in test case names. Use temporary state and a loopback fixture for upstream calls. Smoke-test HTTP changes through the demo page and verify returned download links.
+- Run the Catch2 suite with `xmake test --output-on-failure`. Name test files `*_tests.cpp` and describe the observable behavior in each test case name.
+- Give each test case one behavior or a closely related scenario. Use separate cases for successful operations, expected errors, and edge conditions. Keep related assertions together when they verify the same outcome.
+- Keep cases independent of execution order. Share fixture setup where it reduces duplication, and give each case isolated mutable state, such as its own in-memory SQLite database or temporary directory.
+- Use loopback fixtures for HTTP integration tests and upstream calls. Smoke-test changes to the demo page and verify returned download links when applicable.
 
 ## Commits and Pull Requests
 
