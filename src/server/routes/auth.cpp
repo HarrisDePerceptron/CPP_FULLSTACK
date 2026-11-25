@@ -65,7 +65,7 @@ void registerAuthRoutes(const std::shared_ptr<Services>& services, const std::st
         return login(services, std::move(request));
     }, {Post});
     server.registerHandler("/api/logout", [](HttpRequestPtr request) -> Task<HttpResponsePtr> {
-        auto response = HttpResponse::newHttpResponse(k204NoContent, CT_NONE);
+        auto response = apiOk(*request);
         response->addCookie(sessionCookie(request, "expired", 0));
         response->addHeader("Cache-Control", "no-store");
         co_return response;

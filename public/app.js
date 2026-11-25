@@ -58,9 +58,9 @@ $("check-status").addEventListener("click", () => request("/status"));
 $("fetch-content").addEventListener("click", () => request("/api/content"));
 $("whoami").addEventListener("click", () => request("/api/me", {}, true));
 $("logout").addEventListener("click", () => {
-    request("/api/logout", { method: "POST" }, false, () => {
+    request("/api/logout", { method: "POST" }, false, (status, body) => {
         setSession(null);
-        showResult("Signed out", "The server cleared the session cookie.");
+        showResult(status, body);
     });
 });
 
@@ -75,7 +75,8 @@ $("login").addEventListener("submit", (event) => {
         body: JSON.stringify({ username, password }),
     }, false, (status, body) => {
         setSession(username);
-        showResult(status, { username, expires_in: body.data[0].expires_in });
+        const { token_type, expires_in } = body.data[0];
+        showResult(status, { ...body, data: [{ token_type, expires_in }] });
     });
     form.elements.password.value = "";
 });
