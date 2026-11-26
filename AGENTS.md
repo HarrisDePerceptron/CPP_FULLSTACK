@@ -31,7 +31,9 @@ Config fields resolve from the process environment, then `.env`, then `config.js
 
 Use four spaces and place opening braces on the declaration line. Use `.h` for C++ headers and `.cpp` for implementations. Keep route handlers small and delegate persistence and outbound calls to their modules. Always use `co_await` for asynchronous application code and `std::println` for console output, including logs. Use `api_ok` and `api_error` for typed API responses.
 
-Use `snake_case` for project-owned C++ functions, methods, variables, fields, constants, and enum values. Use `PascalCase` for types. Keep macro names and names required by third-party APIs in their existing spelling. Preserve existing JSON keys, configuration keys, and stored database names when renaming C++ identifiers.
+Use `snake_case` for project-owned C++ functions, methods, variables, fields, constants, and enum values. Use `PascalCase` for project-owned types. Keep existing macro spellings and use third-party identifiers as declared, including Drogon methods such as `registerHandler()`. Preserve existing JSON keys, configuration keys, and stored database names when renaming C++ identifiers.
+
+Use `this->method()` for instance calls on the current object, including inherited methods. Use `this->Base::method()` to call a specific base implementation. Call static methods as `Type::method()` and qualify free functions with their namespace when the name could be confused with a member.
 
 Prefer values for direct ownership and references for required borrows. Use `std::optional<std::reference_wrapper<T>>` for optional borrows and smart pointers for explicit heap ownership. Avoid raw pointers in application interfaces. Adapt third-party APIs that require raw pointers at the integration boundary.
 
