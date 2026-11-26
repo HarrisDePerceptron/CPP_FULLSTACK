@@ -56,6 +56,10 @@ records and DTOs in separate headers under `src/app/models/`. Use the public
 framework headers for persistence, CRUD, or HTTP responses. Wire the feature
 into the service container and route registration in `src/app/server/`.
 
+`src/app/server/server.h` contains `serve()` and its inline startup helpers
+for Drogon setup, route registration, and lifecycle callbacks. The framework
+provides separate HTTP hooks for access logging and exception handling.
+
 ## Database example
 
 The database layer opens one shared SQLite backend through Drogon. Each DAO maps a C++ record to a table and provides coroutine-based queries. In the server, startup initializes the DAOs, services own them and handle business logic, and routes call the services.

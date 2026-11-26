@@ -2,7 +2,7 @@
 
 ## Project Structure
 
-- `src/main.cpp` starts the Drogon server. Put startup and service wiring in `src/app/server/` and HTTP handlers in its `routes/` subdirectory.
+- `src/main.cpp` calls the inline `serve()` entry point in `src/app/server/server.h`. Keep startup and service wiring in that directory and HTTP handlers in its `routes/` subdirectory. Register access logging and exception handling as separate framework hooks.
 - Define all settings, defaults, and field validation in `src/app/config.h`. Use public members on a plain config struct and call `load_config<Config>(root)` at startup. The member names supply the JSON keys and environment variable names. See the [README configuration example](README.md#configuration).
 - Keep business rules, transaction orchestration, and upstream clients in `src/app/services/`. Keep domain DAOs and SQL in `src/app/dao/`. Put persisted records and DTOs in separate model headers under `src/app/models/`.
 - `src/framework/` holds reusable database, CRUD, HTTP, JWT, storage, and support code. The `template_core` target builds this layer independently. Framework code must not include app headers.

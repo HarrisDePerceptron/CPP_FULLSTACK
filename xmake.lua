@@ -36,14 +36,7 @@ add_options("app_namespace")
 add_defines("APP_NAMESPACE=$(app_namespace)", { public = true })
 add_files("src/framework/**.cpp")
 add_includedirs("src", { public = true })
-add_packages(
-	"drogon",
-	"glaze",
-	"jwt-cpp",
-	"libsodium",
-	"magic_enum",
-	{ public = true }
-)
+add_packages("drogon", "glaze", "jwt-cpp", "libsodium", "magic_enum", { public = true })
 
 target("app_core")
 set_kind("static")

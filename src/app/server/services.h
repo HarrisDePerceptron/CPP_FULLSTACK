@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <memory>
 
 namespace APP_NAMESPACE {
 
@@ -32,5 +33,7 @@ struct Services {
     Workers workers;
     std::atomic_flag stopping{};
 };
+
+std::shared_ptr<Services> initialize_services(const std::filesystem::path& root, const Config& config);
 
 }

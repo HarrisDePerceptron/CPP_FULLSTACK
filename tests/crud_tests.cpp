@@ -1,5 +1,7 @@
 #include "framework/db/base_dao.h"
 #include "framework/crud/crud_router.h"
+#include "framework/http/server_hooks.h"
+#include "framework/support/workers.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <drogon/HttpClient.h>
@@ -171,6 +173,17 @@ public:
             try {
                 auto& server = drogon::app();
                 server.addListener("127.0.0.1", port_).setThreadNum(1);
+                register_exception_handler(server, Logger(LogLevel::error));
+                server.registerHandler("/exceptions/busy", [](drogon::HttpRequestPtr)
+                    -> drogon::Task<drogon::HttpResponsePtr> {
+                    throw WorkersBusy{};
+                    co_return nullptr;
+                }, {drogon::Get});
+                server.registerHandler("/exceptions/unexpected", [](drogon::HttpRequestPtr)
+                    -> drogon::Task<drogon::HttpResponsePtr> {
+                    throw std::runtime_error("private fixture failure");
+                    co_return nullptr;
+                }, {drogon::Get});
                 for (const std::string prefix : {"/success", "/errors", "/edges"}) {
                     auto database = drogon::sync_wait(open_sqlite_database(":memory:"));
                     auto service = std::make_shared<WidgetService>(drogon::sync_wait(WidgetDao::init(database)));
@@ -253,6 +266,23 @@ std::string create_widget(const CrudClient& client) {
     return "/widgets/" + std::to_string(created[0]["id"].asInt64());
 }
 
+}
+
+TEST_CASE("The exception hook returns a 503 for a busy worker pool", "[http]") {
+    const crud_test::CrudClient client("/exceptions");
+    const auto response = client.get("/busy");
+    crud_test::check_reply(response, 503);
+    const auto json = response->getJsonObject();
+    CHECK((*json)["error"]["code"].asString() == "SERVICE_UNAVAILABLE");
+}
+
+TEST_CASE("The exception hook returns a generic 500 for unexpected errors", "[http]") {
+    const crud_test::CrudClient client("/exceptions");
+    const auto response = client.get("/unexpected");
+    crud_test::check_reply(response, 500);
+    const auto json = response->getJsonObject();
+    CHECK((*json)["error"]["code"].asString() == "INTERNAL_ERROR");
+    CHECK((*json)["error"]["message"].asString() == "Internal server error.");
 }
 
 TEST_CASE("CRUD routes create, read, filter, update and delete resources", "[crud]") {
