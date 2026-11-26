@@ -4,7 +4,7 @@
 
 - `src/main.cpp` calls the inline `serve()` entry point in `src/app/server/server.h`. Keep startup and service wiring in that directory and HTTP handlers in its `routes/` subdirectory. Register access logging and exception handling as separate framework hooks.
 - Mount feature route modules from `src/app/server/routes.cpp` and pass the Drogon server explicitly. Keep each path, HTTP method, and middleware constraint visible in the feature's `registerHandler()` calls. Give each method its own registration.
-- Define all settings, defaults, and field validation in `src/app/config.h`. Use public members on a plain config struct and call `load_config<Config>(root)` at startup. The member names supply the JSON keys and environment variable names. See the [README configuration example](README.md#configuration).
+- Define app settings, defaults, and field validation in `src/app/config.h`. Use public members on a plain config struct and call `load_config<Config>(root)` at startup. Use the framework's `ServerConfig` for shared server settings and defaults. The member names supply the JSON keys and environment variable names. See the [README configuration example](README.md#configuration).
 - Keep business rules, transaction orchestration, and upstream clients in `src/app/services/`. Keep domain DAOs and SQL in `src/app/dao/`. Put persisted records and DTOs in separate model headers under `src/app/models/`.
 - `src/framework/` holds reusable database, CRUD, HTTP, JWT, storage, and support code. The `template_core` target builds this layer independently. Framework code must not include app headers.
 - Include `framework/db/base_dao.h` to define a DAO. Its implementation headers are private to the framework.
@@ -25,7 +25,7 @@ Run commands from the project root with Xmake and a C++26 compiler and standard 
 
 The optional `.env` supplies `APP_JWT_SECRET`. See `.env.example` for the format. An existing environment variable takes precedence. Without a configured key, a server restart invalidates previously issued tokens. Keep `.env`, database files, and uploaded content out of commits.
 
-Config fields resolve from the process environment, then `.env`, then `config.json`. Use `APP_` followed by the uppercase JSON key, such as `APP_PORT` or `APP_LOG_LEVEL`. Put sensitive values in the environment or ignored `.env` and omit their keys from `config.json`. Validate the combined configuration.
+Config fields resolve from the process environment, then `.env`, then `config.json`. Use `APP_` followed by the uppercase top-level JSON key. For listener, logging, and storage settings, set `APP_SERVER` to a JSON object. This replaces the JSON `server` object, and omitted fields use framework defaults. Put sensitive values in the environment or ignored `.env` and omit their keys from `config.json`. Validate the combined configuration.
 
 ## Coding Style
 

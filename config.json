@@ -1,7 +1,9 @@
 {
-    "port": 8080,
+    "server": {
+        "port": 8080,
+        "log_level": "info"
+    },
     "jwt_lifetime_seconds": 1800,
-    "log_level": "info",
     "test_user": "test_user",
     "test_password": "test_password"
 }

@@ -65,20 +65,27 @@ HttpResponsePtr no_store(HttpResponsePtr response) {
     return response;
 }
 
-Task<HttpResponsePtr> feed_page(std::shared_ptr<Services> services, HttpRequestPtr request) {
+HttpResponsePtr render_page(const std::string& view, const std::string& public_url_prefix) {
+    HttpViewData data;
+    data.insert("public_url_prefix", public_url_prefix);
+    return no_store(HttpResponse::newHttpViewResponse(view, data));
+}
+
+Task<HttpResponsePtr> feed_page(std::shared_ptr<Services> services, HttpRequestPtr request,
+                                const std::string& public_url_prefix) {
     const auto username = services->tokens.verify(request->getCookie(session_cookie_name));
     if (!username || !co_await services->users.find_id(*username)) {
         co_return no_store(HttpResponse::newRedirectionResponse("/social/login"));
     }
-    co_return no_store(HttpResponse::newHttpViewResponse("AppViews::social"));
+    co_return render_page("AppViews::social", public_url_prefix);
 }
 
 Task<HttpResponsePtr> redirect_to_feed(HttpRequestPtr) {
     co_return no_store(HttpResponse::newRedirectionResponse("/"));
 }
 
-Task<HttpResponsePtr> login_page(HttpRequestPtr) {
-    co_return no_store(HttpResponse::newHttpViewResponse("AppViews::social_login"));
+Task<HttpResponsePtr> login_page(const std::string& public_url_prefix) {
+    co_return render_page("AppViews::social_login", public_url_prefix);
 }
 
 Task<HttpResponsePtr> search(std::shared_ptr<Services> services, HttpRequestPtr request) {
@@ -168,12 +175,14 @@ Task<HttpResponsePtr> set_like(std::shared_ptr<Services> services, HttpRequestPt
 }
 
 void register_social_routes(drogon::HttpAppFramework& server, const std::shared_ptr<Services>& services,
-                            const std::string& jwt) {
-    server.registerHandler("/", [services](HttpRequestPtr request) {
-        return feed_page(services, std::move(request));
+                            const std::string& jwt, const std::string& public_url_prefix) {
+    server.registerHandler("/", [services, public_url_prefix](HttpRequestPtr request) {
+        return feed_page(services, std::move(request), public_url_prefix);
     }, {Get});
     server.registerHandler("/social", &redirect_to_feed, {Get});
-    server.registerHandler("/social/login", &login_page, {Get});
+    server.registerHandler("/social/login", [public_url_prefix](HttpRequestPtr) {
+        return login_page(public_url_prefix);
+    }, {Get});
     server.registerHandler("/api/search", [services](HttpRequestPtr request) {
         return search(services, std::move(request));
     }, {Get, jwt});

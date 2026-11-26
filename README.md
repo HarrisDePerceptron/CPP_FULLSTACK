@@ -293,9 +293,36 @@ The backend commits when the callback completes and rolls back if it throws. Use
 
 Set defaults in `config.json`. Every top-level config field can be set through
 the process environment or `.env` using `APP_` followed by the uppercase JSON key.
-For example, `APP_LOG_LEVEL=warn` sets `log_level`. The precedence is process
+For example, `APP_JWT_LIFETIME_SECONDS=3600` sets `jwt_lifetime_seconds`. The precedence is process
 environment, then `.env`, then JSON, then C++ defaults. Environment-provided fields
 can be omitted from the JSON file. See [config.json](config.json) and [`.env.example`](.env.example).
+
+The optional `server` object configures the framework runner, including the
+listener and log level.
+
+| Server field | Default |
+| --- | --- |
+| `bind_address` | `127.0.0.1` |
+| `port` | `8080` |
+| `max_connections` | `64` |
+| `log_level` | `info` |
+| `state_directory` | `.local` |
+| `database_filename` | `users.sqlite3` inside the state directory |
+| `public_directory` | `public` |
+| `public_url_prefix` | `/public/` |
+| `uploads_subdirectory` | `uploads` inside the public directory and URL prefix |
+| `request_cache_subdirectory` | `request-cache` inside the state directory |
+| `max_upload_bytes` | `10485760` (10 MiB) |
+
+Relative directories resolve from the app root. Public files and private state
+must be in separate directory trees. Use leading and trailing slashes for the
+public URL prefix and literal components made of letters, digits, hyphens,
+underscores, or tildes. Changing the public prefix updates asset and upload URLs.
+Place the demo assets in the configured public directory. Drogon allows an
+additional 64 KiB per request for multipart framing.
+
+In `.env`, `APP_SERVER='{"port":8081,"log_level":"warn","public_url_prefix":"/assets/"}'`
+replaces the JSON `server` object. Omitted fields in that override use the defaults.
 
 Keep sensitive values in the process environment or in the ignored `.env` file.
 For example, set `APP_TEST_PASSWORD` there and omit `test_password` from the JSON.

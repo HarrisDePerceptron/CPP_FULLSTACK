@@ -10,20 +10,19 @@
 #include "framework/support/log.h"
 #include "framework/support/workers.h"
 
-#include <atomic>
 #include <chrono>
 #include <memory>
 
 namespace APP_NAMESPACE {
 
 struct Services {
-    Services(const std::filesystem::path& root, const Config& config, LogLevel log_level,
+    Services(const ResolvedServerConfig& server, const Config& config, const Logger& logger,
              std::string key, UserService user_service, SocialService social_service)
         : users(std::move(user_service)),
           social(std::move(social_service)),
           tokens(std::move(key), std::chrono::seconds{config.jwt_lifetime_seconds}),
-          uploads(root / "public/uploads"),
-          log(log_level) {}
+          uploads(server.uploads_directory, server.max_upload_bytes),
+          log(logger) {}
 
     UserService users;
     SocialService social;
@@ -31,10 +30,9 @@ struct Services {
     Uploads uploads;
     Logger log;
     Workers workers;
-    std::atomic_flag stopping{};
 };
 
-std::shared_ptr<Services> initialize_services(const std::filesystem::path& root, const Config& config,
-                                              LogLevel log_level);
+std::shared_ptr<Services> initialize_services(const ResolvedServerConfig& server, const Config& config,
+                                              const Logger& log);
 
 }

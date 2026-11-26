@@ -4,9 +4,9 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Login</title>
-    <script src="/public/theme.js"></script>
-    <link rel="stylesheet" href="/public/demo.css">
-    <script defer src="/public/social.js"></script>
+    <script src="[[public_url_prefix]]theme.js"></script>
+    <link rel="stylesheet" href="[[public_url_prefix]]demo.css">
+    <script defer src="[[public_url_prefix]]social.js"></script>
 </head>
 <body class="antialiased">
     <header class="absolute right-0 top-0 z-10 px-4 py-3 sm:px-7">

@@ -11,9 +11,8 @@ namespace {
 
 using namespace drogon;
 
-constexpr auto upload_prefix = "/public/uploads/";
-
-Task<HttpResponsePtr> upload(std::shared_ptr<Services> services, HttpRequestPtr request) {
+Task<HttpResponsePtr> upload(std::shared_ptr<Services> services, HttpRequestPtr request,
+                             const std::string& uploads_url_prefix) {
     const auto saved = co_await services->workers.submit([&]
         -> std::expected<std::string, UploadError> {
         MultiPartParser parser;
@@ -28,14 +27,18 @@ Task<HttpResponsePtr> upload(std::shared_ptr<Services> services, HttpRequestPtr 
         switch (saved.error()) {
             case UploadError::empty:
                 co_return api_error(*request, k400BadRequest, "VALIDATION_FAILED", "Choose one file to upload.");
-            case UploadError::too_large:
-                co_return api_error(*request, k413RequestEntityTooLarge, "PAYLOAD_TOO_LARGE", "The file exceeds 10 MiB.");
+            case UploadError::too_large: {
+                const auto limit = services->uploads.maximum_bytes();
+                auto message = limit == max_upload_bytes ? std::string("The file exceeds 10 MiB.")
+                    : "The file exceeds the " + std::to_string(limit) + " byte limit.";
+                co_return api_error(*request, k413RequestEntityTooLarge, "PAYLOAD_TOO_LARGE", std::move(message));
+            }
             case UploadError::unsupported:
                 co_return api_error(*request, k415UnsupportedMediaType, "UNSUPPORTED_MEDIA_TYPE", "Choose a PDF or a supported image.");
         }
     }
 
-    const auto url = std::string(upload_prefix) + *saved;
+    const auto url = uploads_url_prefix + *saved;
     auto response = api_ok(*request, UploadResult{url}, k201Created);
     response->addHeader("Location", url);
     co_return response;
@@ -56,12 +59,11 @@ Task<HttpResponsePtr> download(std::shared_ptr<Services> services, HttpRequestPt
 }
 
 void register_upload_routes(drogon::HttpAppFramework& server, const std::shared_ptr<Services>& services,
-                            const std::string& jwt) {
-    server.registerHandler("/api/uploads", [services](HttpRequestPtr request) {
-        return upload(services, std::move(request));
+                            const std::string& jwt, const std::string& uploads_url_prefix) {
+    server.registerHandler("/api/uploads", [services, uploads_url_prefix](HttpRequestPtr request) {
+        return upload(services, std::move(request), uploads_url_prefix);
     }, {Post, jwt});
-    server.registerHandler("/public/uploads/{1}", [services](HttpRequestPtr request,
-                                                              std::string name) {
+    server.registerHandler(uploads_url_prefix + "{1}", [services](HttpRequestPtr request, std::string name) {
         return download(services, std::move(request), std::move(name));
     }, {Get});
 }

@@ -76,7 +76,7 @@ private:
 
 std::expected<std::string, UploadError> Uploads::save(std::string_view bytes) const {
     if (bytes.empty()) return std::unexpected(UploadError::empty);
-    if (bytes.size() > max_upload_bytes) return std::unexpected(UploadError::too_large);
+    if (bytes.size() > maximum_bytes_) return std::unexpected(UploadError::too_large);
     const auto type = detect(bytes);
     if (!type) return std::unexpected(UploadError::unsupported);
 
