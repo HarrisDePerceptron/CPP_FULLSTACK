@@ -1,8 +1,10 @@
 #include "app_namespace.h"
 #include "server.h"
 
+#include "app/config.h"
 #include "framework/auth/jwt_middleware.h"
 #include "framework/http/json_response.h"
+#include "framework/support/base_config.h"
 #include "routes.h"
 #include "services.h"
 
@@ -27,7 +29,7 @@ void configure_logging(const Config& config, const Logger& log) {
     constexpr trantor::Logger::LogLevel levels[]{
         trantor::Logger::kInfo, trantor::Logger::kWarn, trantor::Logger::kError
     };
-    app().setLogLevel(levels[static_cast<int>(config.log_level)]);
+    app().setLogLevel(levels[static_cast<int>(config.parsed_log_level())]);
     app().registerPreRoutingAdvice([](const HttpRequestPtr& request) {
         request->attributes()->insert(start_attribute, std::chrono::steady_clock::now());
         api_request_id(*request);
@@ -59,8 +61,7 @@ void configure_logging(const Config& config, const Logger& log) {
 
 int serve(const std::filesystem::path& root) {
     if (sodium_init() < 0) throw std::runtime_error("could not initialize libsodium");
-    load_environment(root / ".env");
-    const auto config = read_config(root / "config.json");
+    const auto config = load_config<Config>(root);
     const auto state = root / ".local";
     const auto public_path = root / "public";
     fs::create_directories(state / "empty");

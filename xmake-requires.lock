@@ -51,9 +51,6 @@
             },
             version = "4.3.4"
         },
-        ["dotenv-cpp 9275210b8abf1a551fb81e0ba45866286d764acd#f56260b5"] = {
-            version = "9275210b8abf1a551fb81e0ba45866286d764acd"
-        },
         ["drogon v1.9.12#3cee8ea1"] = {
             repo = {
                 branch = "master",

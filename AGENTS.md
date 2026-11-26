@@ -2,7 +2,8 @@
 
 ## Project Structure
 
-- `src/main.cpp` starts the Drogon server. Put startup, configuration, and service wiring in `src/app/server/` and HTTP handlers in its `routes/` subdirectory.
+- `src/main.cpp` starts the Drogon server. Put startup and service wiring in `src/app/server/` and HTTP handlers in its `routes/` subdirectory.
+- Define all settings, defaults, and field validation in `src/app/config.h`. Use public members on a plain config struct and call `load_config<Config>(root)` at startup. The member names supply the JSON keys and environment variable names. See the [README configuration example](README.md#configuration).
 - Keep business rules, transaction orchestration, and upstream clients in `src/app/services/`. Keep domain DAOs and SQL in `src/app/dao/`. Put persisted records and DTOs in separate model headers under `src/app/models/`.
 - `src/framework/` holds reusable database, CRUD, HTTP, JWT, storage, and support code. The `template_core` target builds this layer independently. Framework code must not include app headers.
 - Include `framework/db/base_dao.h` to define a DAO. Its implementation headers are private to the framework.
@@ -23,7 +24,7 @@ Run commands from the project root with Xmake and a C++26 compiler and standard 
 
 The optional `.env` supplies `APP_JWT_SECRET`. See `.env.example` for the format. An existing environment variable takes precedence. Without a configured key, a server restart invalidates previously issued tokens. Keep `.env`, database files, and uploaded content out of commits.
 
-Listener settings resolve from the process environment, then `.env`, then `config.json`. Use `APP_BIND_ADDRESS` for `bind_address` (defaults to `127.0.0.1`), `APP_PORT` for the required `port` field, and `APP_MAX_CONNECTIONS` for `max_connections` (defaults to `64`). Update existing deployments to use `APP_JWT_SECRET` and sign in again after upgrading.
+Config fields resolve from the process environment, then `.env`, then `config.json`. Use `APP_` followed by the uppercase JSON key, such as `APP_PORT` or `APP_LOG_LEVEL`. Put sensitive values in the environment or ignored `.env` and omit their keys from `config.json`. Validate the combined configuration.
 
 ## Coding Style
 

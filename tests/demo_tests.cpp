@@ -2,10 +2,11 @@
 
 #include <glaze/chrono.hpp>
 #include "framework/db/row_to_struct.h"
-#include "app/server/config.h"
+#include "app/config.h"
 #include "framework/http/json_response.h"
 #include "framework/auth/tokens.h"
 #include "framework/storage/uploads.h"
+#include "framework/support/base_config.h"
 #include "app/services/user_service.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -25,6 +26,10 @@
 #include <tuple>
 
 namespace APP_NAMESPACE {
+
+struct StandaloneConfig {
+    bool enabled = false;
+};
 
 struct SampleRow {
     int count;
@@ -1285,29 +1290,29 @@ TEST_CASE("Listener settings resolve defaults, JSON, dotenv, and process overrid
     REQUIRE(unsetenv("APP_MAX_CONNECTIONS") == 0);
 
     std::ofstream(path) << R"({"port":8080,"jwt_lifetime_seconds":1800,"log_level":"info"})";
-    CHECK(read_config(path).bind_address == "127.0.0.1");
-    CHECK(read_config(path).max_connections == 64);
+    CHECK(read_config<Config>(path).bind_address == "127.0.0.1");
+    CHECK(read_config<Config>(path).max_connections == 64);
 
     std::ofstream(path) << R"({"bind_address":"127.0.0.2","port":8081,"max_connections":32,"jwt_lifetime_seconds":1800,"log_level":"info"})";
-    CHECK(read_config(path).bind_address == "127.0.0.2");
-    CHECK(read_config(path).port == 8081);
-    CHECK(read_config(path).max_connections == 32);
+    CHECK(read_config<Config>(path).bind_address == "127.0.0.2");
+    CHECK(read_config<Config>(path).port == 8081);
+    CHECK(read_config<Config>(path).max_connections == 32);
 
     std::ofstream(env) << "APP_BIND_ADDRESS=127.0.0.3\nAPP_PORT=8082\nAPP_MAX_CONNECTIONS=16\n";
     REQUIRE(setenv("APP_PORT", "8083", 1) == 0);
-    load_environment(env);
-    CHECK(read_config(path).bind_address == "127.0.0.3");
-    CHECK(read_config(path).port == 8083);
-    CHECK(read_config(path).max_connections == 16);
+    const auto overridden = load_config<Config>(temporary.path());
+    CHECK(overridden.bind_address == "127.0.0.3");
+    CHECK(overridden.port == 8083);
+    CHECK(overridden.max_connections == 16);
 
     REQUIRE(setenv("APP_BIND_ADDRESS", "localhost", 1) == 0);
-    CHECK_THROWS(read_config(path));
+    CHECK_THROWS(read_config<Config>(path));
     REQUIRE(unsetenv("APP_BIND_ADDRESS") == 0);
     REQUIRE(setenv("APP_PORT", "8080x", 1) == 0);
-    CHECK_THROWS(read_config(path));
+    CHECK_THROWS(read_config<Config>(path));
     REQUIRE(unsetenv("APP_PORT") == 0);
     REQUIRE(setenv("APP_MAX_CONNECTIONS", "0", 1) == 0);
-    CHECK_THROWS(read_config(path));
+    CHECK_THROWS(read_config<Config>(path));
 }
 
 TEST_CASE("Glaze reads and validates config.json", "[config]") {
@@ -1315,12 +1320,12 @@ TEST_CASE("Glaze reads and validates config.json", "[config]") {
     SavedEnvironment port("APP_PORT");
     REQUIRE(unsetenv("APP_PORT") == 0);
     const auto path = temporary.path() / "config.json";
-    REQUIRE_THROWS(read_config(path));
+    REQUIRE_THROWS(read_config<Config>(path));
     std::ofstream(path) << R"({"port":8080,"jwt_lifetime_seconds":1800,"log_level":"warn"})";
-    const auto config = read_config(path);
+    const auto config = read_config<Config>(path);
     CHECK(config.port == 8080);
-    CHECK(config.jwt_lifetime == 1800s);
-    CHECK(config.log_level == LogLevel::warn);
+    CHECK(config.jwt_lifetime_seconds == 1800);
+    CHECK(config.log_level == "warn");
 
     for (const auto invalid : {
              "not JSON",
@@ -1328,10 +1333,88 @@ TEST_CASE("Glaze reads and validates config.json", "[config]") {
              R"({"port":65536,"jwt_lifetime_seconds":1800,"log_level":"info"})",
              R"({"port":8080,"jwt_lifetime_seconds":0,"log_level":"info"})",
              R"({"port":8080,"jwt_lifetime_seconds":1800,"log_level":"invalid"})",
+             R"({"port":8080,"jwt_lifetime_seconds":1800,"log_level":"info","unexpected":true})",
          }) {
         std::ofstream(path) << invalid;
-        CHECK_THROWS(read_config(path));
+        CHECK_THROWS(read_config<Config>(path));
     }
+
+    std::ofstream(path) << R"({"jwt_lifetime_seconds":1800,"log_level":"info"})";
+    REQUIRE(setenv("APP_PORT", "8080", 1) == 0);
+    CHECK(read_config<Config>(path).port == 8080);
+}
+
+TEST_CASE("The framework loads a config with just the fields it declares", "[config]") {
+    TemporaryDirectory temporary;
+    SavedEnvironment enabled("APP_ENABLED");
+    REQUIRE(unsetenv("APP_ENABLED") == 0);
+    const auto path = temporary.path() / "config.json";
+    std::ofstream(path) << R"({"enabled":true})";
+    CHECK(load_config<StandaloneConfig>(temporary.path()).enabled);
+    REQUIRE(setenv("APP_ENABLED", "false", 1) == 0);
+    CHECK_FALSE(load_config<StandaloneConfig>(temporary.path()).enabled);
+    std::ofstream(path) << R"({"enabled":true,"port":8080})";
+    CHECK_THROWS(read_config<StandaloneConfig>(path));
+}
+
+TEST_CASE("The app config loads listener settings and demo credentials together", "[config]") {
+    TemporaryDirectory temporary;
+    const auto path = temporary.path() / "config.json";
+    std::ofstream(path) << R"({"port":8080,"jwt_lifetime_seconds":1800,"log_level":"warn",)"
+                          R"("test_user":"demo","test_password":"password"})";
+    const auto config = load_config<Config>(temporary.path());
+    CHECK(config.jwt_lifetime_seconds == 1800);
+    CHECK(config.parsed_log_level() == LogLevel::warn);
+    CHECK(config.test_user == "demo");
+    CHECK(config.test_password == "password");
+}
+
+TEST_CASE("The app config requires demo credentials to be supplied together", "[config]") {
+    TemporaryDirectory temporary;
+    const auto path = temporary.path() / "config.json";
+    std::ofstream(path) << R"({"port":8080,"jwt_lifetime_seconds":1800,"log_level":"info","test_user":"demo"})";
+    CHECK_THROWS_WITH(load_config<Config>(temporary.path()),
+        "test_user and test_password must be configured together "
+        "and limited to 128 and 1024 bytes respectively");
+    std::ofstream(path) << R"({"port":8080,"jwt_lifetime_seconds":1800,"log_level":"info"})";
+    const auto config = load_config<Config>(temporary.path());
+    CHECK(config.test_user.empty());
+    CHECK(config.test_password.empty());
+}
+
+TEST_CASE("The app config combines JSON with env-only credentials and framework overrides", "[config]") {
+    TemporaryDirectory temporary;
+    SavedEnvironment password("APP_TEST_PASSWORD");
+    SavedEnvironment user("APP_TEST_USER");
+    SavedEnvironment log_level("APP_LOG_LEVEL");
+    SavedEnvironment lifetime("APP_JWT_LIFETIME_SECONDS");
+    REQUIRE(unsetenv("APP_TEST_PASSWORD") == 0);
+    REQUIRE(unsetenv("APP_TEST_USER") == 0);
+    REQUIRE(unsetenv("APP_LOG_LEVEL") == 0);
+    REQUIRE(unsetenv("APP_JWT_LIFETIME_SECONDS") == 0);
+    std::ofstream(temporary.path() / "config.json")
+        << R"({"port":8080,"log_level":"info","test_user":"demo"})";
+    std::ofstream(temporary.path() / ".env")
+        << "APP_TEST_PASSWORD='synthetic $dollar #hash = value'\n"
+           "APP_TEST_USER=local-demo\nAPP_LOG_LEVEL=warn\nAPP_JWT_LIFETIME_SECONDS=3600\n";
+    REQUIRE(setenv("APP_LOG_LEVEL", "error", 1) == 0);
+
+    const auto config = load_config<Config>(temporary.path());
+    CHECK(config.test_user == "local-demo");
+    CHECK(config.test_password == "synthetic $dollar #hash = value");
+    CHECK(config.log_level == "error");
+    CHECK(config.jwt_lifetime_seconds == 3600);
+
+    REQUIRE(setenv("APP_JWT_LIFETIME_SECONDS", "synthetic-invalid-value", 1) == 0);
+    CHECK_THROWS_WITH(load_config<Config>(temporary.path()),
+        "invalid value for APP_JWT_LIFETIME_SECONDS");
+}
+
+TEST_CASE("Invalid dotenv assignments report the line without exposing its contents", "[config]") {
+    TemporaryDirectory temporary;
+    const auto path = temporary.path() / ".env";
+    std::ofstream(path) << "# comment\nAPP_TEST_PASSWORD='synthetic-unclosed-value\n";
+    CHECK_THROWS_WITH(load_environment(path), "unclosed .env quote on line 2");
 }
 
 TEST_CASE("An existing environment variable overrides .env", "[config]") {

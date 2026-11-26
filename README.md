@@ -38,9 +38,10 @@ xmake test
 
 | Path | Contents |
 | --- | --- |
-| `src/framework/` | Reusable database, CRUD, HTTP, JWT, upload storage, logging, and worker code |
+| `src/framework/` | Reusable configuration, database, CRUD, HTTP, JWT, upload storage, logging, and worker code |
 | `src/main.cpp` | Application entry point |
 | `src/app/` | Demo application organized into server, services, DAO, and model layers |
+| `src/app/config.h` | Application settings, defaults, and validation |
 | `views/` | Drogon CSP templates compiled by Xmake |
 | `public/` | Browser JavaScript, Tailwind source and generated CSS, and runtime uploads |
 | `tests/` | Catch2 tests |
@@ -282,14 +283,51 @@ The backend commits when the callback completes and rolls back if it throws. Use
 
 ## Configuration
 
-Edit [config.json](config.json) to change the listener or demo credentials. The shipped credentials are for local testing. [`.env.example`](.env.example) lists the optional `APP_*` settings, including `APP_JWT_SECRET` to keep existing sessions valid across server restarts. For listener settings, process environment variables take precedence over `.env` and JSON. The default C++ namespace is `App`. Set a different one with `xmake f --app_namespace=MyApp`.
+Set defaults in `config.json`. Every top-level config field can be set through
+the process environment or `.env` using `APP_` followed by the uppercase JSON key.
+For example, `APP_LOG_LEVEL=warn` sets `log_level`. The precedence is process
+environment, then `.env`, then JSON, then C++ defaults. Environment-provided fields
+can be omitted from the JSON file. See [config.json](config.json) and [`.env.example`](.env.example).
+
+Keep sensitive values in the process environment or in the ignored `.env` file.
+For example, set `APP_TEST_PASSWORD` there and omit `test_password` from the JSON.
+Use `APP_JWT_SECRET` to keep sessions valid across restarts. The shipped demo
+credentials are for local testing.
+
+Use one `KEY=VALUE` per line in `.env`. Blank lines and lines beginning with
+`#` are ignored. Outer single or double quotes preserve whitespace and special
+characters. Dollar signs are literal. String fields use the value as text.
+Other fields use JSON values such as `true`, `3600`, or `["one","two"]`.
+
+The default C++ namespace is `App`. Set a different one with `xmake f --app_namespace=MyApp`.
+
+Define all settings and defaults as public members of a plain struct in
+`src/app/config.h`. Each member name supplies the JSON key and the corresponding
+environment variable. For example, `site_name` maps to `APP_SITE_NAME`.
+
+```cpp
+#include "app_namespace.h"
+
+#include <string>
+
+namespace APP_NAMESPACE {
+
+struct Config {
+    std::string site_name = "My app";
+};
+
+}
+```
+
+Include `framework/support/base_config.h` to call `load_config<Config>(root)` at
+startup. After applying environment values, the loader calls the config type's
+optional public `void validate() const`.
 
 ## Main dependencies
 
 - **Drogon** for HTTP routing, async outbound requests, and server-rendered views
 - **SQLite, libsodium, and jwt-cpp** for account storage, password hashing, and signed sessions
 - **simdjson and Glaze** for JSON handling
-- **dotenv-cpp** for loading `.env`
 - **Tailwind CSS** for styling and **Catch2** for tests
 
 ## Development rules

@@ -10,6 +10,8 @@
 
 namespace APP_NAMESPACE {
 
+std::string load_signing_key();
+
 class Tokens {
 public:
     Tokens(std::string key, std::chrono::seconds lifetime)

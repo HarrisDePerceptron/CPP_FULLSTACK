@@ -5,8 +5,11 @@
 #include <glaze/json/generic.hpp>
 #define JWT_DISABLE_PICOJSON
 #include <jwt-cpp/jwt.h>
+#include <sodium.h>
 
+#include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <stdexcept>
 
 namespace APP_NAMESPACE {
@@ -52,6 +55,23 @@ struct GlazeTraits {
     }
 };
 
+}
+
+std::string load_signing_key() {
+    std::array<unsigned char, 32> key;
+    if (const auto* configured = std::getenv("APP_JWT_SECRET")) {
+        const std::string_view hex(configured);
+        if (hex.size() != key.size() * 2 ||
+            sodium_hex2bin(key.data(), key.size(), hex.data(), hex.size(), nullptr,
+                           nullptr, nullptr) != 0) {
+            throw std::runtime_error("APP_JWT_SECRET must contain 64 hexadecimal characters");
+        }
+    } else {
+        randombytes_buf(key.data(), key.size());
+    }
+    std::string result(reinterpret_cast<const char*>(key.data()), key.size());
+    sodium_memzero(key.data(), key.size());
+    return result;
 }
 
 std::string Tokens::issue(std::string_view username) const {
