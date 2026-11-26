@@ -12,7 +12,8 @@
 
 namespace APP_NAMESPACE {
 
-std::shared_ptr<Services> initialize_services(const std::filesystem::path& root, const Config& config) {
+std::shared_ptr<Services> initialize_services(const std::filesystem::path& root, const Config& config,
+                                              LogLevel log_level) {
     auto signing_key = load_signing_key();
     trantor::EventLoopThread startup_thread;
     startup_thread.run();
@@ -25,7 +26,7 @@ std::shared_ptr<Services> initialize_services(const std::filesystem::path& root,
         auto comments = co_await SocialCommentDao::init(database);
         auto likes = co_await SocialLikeDao::init(database);
         SocialService social(std::move(posts), std::move(comments), std::move(likes));
-        auto services = std::make_shared<Services>(root, config, std::move(signing_key),
+        auto services = std::make_shared<Services>(root, config, log_level, std::move(signing_key),
                                                    UserService(std::move(users)), std::move(social));
         if (!config.test_user.empty()) {
             co_await services->users.configure_demo(config.test_user, config.test_password);

@@ -17,13 +17,13 @@
 namespace APP_NAMESPACE {
 
 struct Services {
-    Services(const std::filesystem::path& root, const Config& config, std::string key, UserService user_service,
-             SocialService social_service)
+    Services(const std::filesystem::path& root, const Config& config, LogLevel log_level,
+             std::string key, UserService user_service, SocialService social_service)
         : users(std::move(user_service)),
           social(std::move(social_service)),
           tokens(std::move(key), std::chrono::seconds{config.jwt_lifetime_seconds}),
           uploads(root / "public/uploads"),
-          log(config.parsed_log_level()) {}
+          log(log_level) {}
 
     UserService users;
     SocialService social;
@@ -34,6 +34,7 @@ struct Services {
     std::atomic_flag stopping{};
 };
 
-std::shared_ptr<Services> initialize_services(const std::filesystem::path& root, const Config& config);
+std::shared_ptr<Services> initialize_services(const std::filesystem::path& root, const Config& config,
+                                              LogLevel log_level);
 
 }

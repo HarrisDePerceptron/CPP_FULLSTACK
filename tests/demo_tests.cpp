@@ -1364,7 +1364,7 @@ TEST_CASE("The app config loads listener settings and demo credentials together"
                           R"("test_user":"demo","test_password":"password"})";
     const auto config = load_config<Config>(temporary.path());
     CHECK(config.jwt_lifetime_seconds == 1800);
-    CHECK(config.parsed_log_level() == LogLevel::warn);
+    CHECK(parse_log_level(config.log_level) == LogLevel::warn);
     CHECK(config.test_user == "demo");
     CHECK(config.test_password == "password");
 }

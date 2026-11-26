@@ -45,8 +45,8 @@ private:
 
 }
 
-std::string register_jwt_middleware(std::shared_ptr<const Tokens> tokens) {
-    drogon::app().registerMiddleware(std::make_shared<JwtMiddleware>(std::move(tokens)));
+std::string register_jwt_middleware(drogon::HttpAppFramework& server, std::shared_ptr<const Tokens> tokens) {
+    server.registerMiddleware(std::make_shared<JwtMiddleware>(std::move(tokens)));
     return JwtMiddleware::classTypeName();
 }
 

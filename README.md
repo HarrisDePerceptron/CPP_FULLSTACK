@@ -57,8 +57,12 @@ framework headers for persistence, CRUD, or HTTP responses. Wire the feature
 into the service container and route registration in `src/app/server/`.
 
 `src/app/server/server.h` contains `serve()` and its inline startup helpers
-for Drogon setup, route registration, and lifecycle callbacks. The framework
-provides separate HTTP hooks for access logging and exception handling.
+for Drogon setup and lifecycle callbacks. Startup calls `register_app_routes()`
+in `src/app/server/routes.cpp` to register JWT middleware and mount the
+feature modules. Each module receives the Drogon server explicitly and lists
+its paths, methods, and middleware with `registerHandler()`. Put each HTTP
+method on its own route registration and keep the handler beside the route list.
+The framework provides separate HTTP hooks for access logging and exception handling.
 
 ## Database example
 

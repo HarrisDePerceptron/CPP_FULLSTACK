@@ -55,8 +55,8 @@ Task<HttpResponsePtr> download(std::shared_ptr<Services> services, HttpRequestPt
 
 }
 
-void register_upload_routes(const std::shared_ptr<Services>& services, const std::string& jwt) {
-    auto& server = app();
+void register_upload_routes(drogon::HttpAppFramework& server, const std::shared_ptr<Services>& services,
+                            const std::string& jwt) {
     server.registerHandler("/api/uploads", [services](HttpRequestPtr request) {
         return upload(services, std::move(request));
     }, {Post, jwt});

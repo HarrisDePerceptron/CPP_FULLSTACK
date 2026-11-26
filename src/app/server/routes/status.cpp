@@ -6,12 +6,18 @@
 #include <map>
 
 namespace APP_NAMESPACE {
+namespace {
 
-void register_demo_routes() {
-    using namespace drogon;
-    app().registerHandler("/status", [](HttpRequestPtr request) -> Task<HttpResponsePtr> {
-        co_return api_ok(*request, std::map<std::string, bool>{{"ok", true}});
-    }, {Get});
+using namespace drogon;
+
+Task<HttpResponsePtr> status(HttpRequestPtr request) {
+    co_return api_ok(*request, std::map<std::string, bool>{{"ok", true}});
+}
+
+}
+
+void register_demo_routes(drogon::HttpAppFramework& server) {
+    server.registerHandler("/status", &status, {Get});
 }
 
 }

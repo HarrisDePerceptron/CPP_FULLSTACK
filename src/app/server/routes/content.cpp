@@ -25,8 +25,7 @@ Task<HttpResponsePtr> content(std::shared_ptr<Services> services, HttpRequestPtr
 
 }
 
-void register_content_routes(const std::shared_ptr<Services>& services) {
-    auto& server = app();
+void register_content_routes(drogon::HttpAppFramework& server, const std::shared_ptr<Services>& services) {
     server.registerHandler("/api/content", [services](HttpRequestPtr request) {
         return content(services, std::move(request));
     }, {Get});

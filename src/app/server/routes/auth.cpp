@@ -65,28 +65,31 @@ Task<HttpResponsePtr> login(std::shared_ptr<Services> services, HttpRequestPtr r
     co_return response;
 }
 
+Task<HttpResponsePtr> logout(HttpRequestPtr request) {
+    auto response = api_ok(*request);
+    response->addCookie(session_cookie(request, "expired", 0));
+    response->addHeader("Cache-Control", "no-store");
+    co_return response;
 }
 
-void register_auth_routes(const std::shared_ptr<Services>& services, const std::string& jwt) {
-    auto& server = app();
+Task<HttpResponsePtr> current_user(HttpRequestPtr request) {
+    auto response = api_ok(*request, Identity{request->attributes()->get<std::string>(subject_attribute)});
+    response->addHeader("Cache-Control", "no-store");
+    co_return response;
+}
+
+}
+
+void register_auth_routes(drogon::HttpAppFramework& server, const std::shared_ptr<Services>& services,
+                          const std::string& jwt) {
     server.registerHandler("/api/signup", [services](HttpRequestPtr request) {
         return signup(services, std::move(request));
     }, {Post});
     server.registerHandler("/api/login", [services](HttpRequestPtr request) {
         return login(services, std::move(request));
     }, {Post});
-    server.registerHandler("/api/logout", [](HttpRequestPtr request) -> Task<HttpResponsePtr> {
-        auto response = api_ok(*request);
-        response->addCookie(session_cookie(request, "expired", 0));
-        response->addHeader("Cache-Control", "no-store");
-        co_return response;
-    }, {Post});
-    server.registerHandler("/api/me", [](HttpRequestPtr request) -> Task<HttpResponsePtr> {
-        auto response = api_ok(*request, Identity{request->attributes()->get<std::string>(
-            subject_attribute)});
-        response->addHeader("Cache-Control", "no-store");
-        co_return response;
-    }, {Get, jwt});
+    server.registerHandler("/api/logout", &logout, {Post});
+    server.registerHandler("/api/me", &current_user, {Get, jwt});
 }
 
 }

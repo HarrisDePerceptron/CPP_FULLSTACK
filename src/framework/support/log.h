@@ -2,16 +2,23 @@
 
 #include "app_namespace.h"
 
-
 #include <chrono>
 #include <format>
 #include <print>
+#include <stdexcept>
 #include <string_view>
 #include <utility>
 
 namespace APP_NAMESPACE {
 
 enum class LogLevel { info, warn, error };
+
+inline LogLevel parse_log_level(std::string_view value) {
+    if (value == "info") return LogLevel::info;
+    if (value == "warn") return LogLevel::warn;
+    if (value == "error") return LogLevel::error;
+    throw std::runtime_error("log_level must be info, warn, or error");
+}
 
 class Logger {
 public:
