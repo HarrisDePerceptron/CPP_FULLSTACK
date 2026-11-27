@@ -1,6 +1,7 @@
 set_project("app_template")
 set_languages("cxx26")
 add_rules("mode.debug", "mode.release")
+add_rules("plugin.compile_commands.autoupdate", { outputdir = "build", lsp = "clangd" })
 set_policy("package.requires_lock", true)
 set_policy("run.autobuild", true)
 
@@ -19,6 +20,23 @@ set_default("App")
 set_showmenu(true)
 set_description("C++ namespace for the application")
 option_end()
+
+option("sanitizers")
+set_default(false)
+set_showmenu(true)
+set_description("Enable AddressSanitizer and UndefinedBehaviorSanitizer for project targets")
+option_end()
+
+rule("app.sanitizers")
+on_load(function(target)
+	if has_config("sanitizers") then
+		target:set("policy", "build.sanitizer.address", true)
+		target:set("policy", "build.sanitizer.undefined", true)
+	end
+end)
+rule_end()
+
+add_rules("app.sanitizers")
 
 target("format_cpp")
 set_kind("phony")

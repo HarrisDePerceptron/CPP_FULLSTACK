@@ -20,6 +20,7 @@ Run commands from the project root with Xmake and a C++26 compiler and standard 
 - Set a custom C++ namespace with `xmake f --app_namespace=MyApp`. The default is `App`.
 - `xmake` resolves dependencies and builds the server. First-time dependency resolution requires network access or a populated Xmake cache.
 - Builds format C++ files in `src/` and `tests/` before compiling, including the automatic build in `xmake run app_server`. Install `clang-format` on `PATH` or use Xcode's formatter on macOS. Run `xmake build format_cpp` for a format-only pass.
+- Builds refresh `build/compile_commands.json` for the active configuration. The repo's `.clangd` points to that directory.
 - `xmake build template_core` builds the shared library by itself.
 - `xmake run app_server` starts the server at `http://127.0.0.1:8080` with the default `config.json`. The shipped config sets the local demo credentials with `test_user` and `test_password`. When both are omitted, the server generates demo credentials on first launch and prints them. Startup applies configured credentials to the demo account in `.local/`. Use the shipped credentials only for local testing.
 - After editing the page or Tailwind source, run `npm ci` and `npm run build:css`. Commit the regenerated `public/demo.css`.
@@ -62,6 +63,7 @@ auto posts = co_await post_dao.find()
 ## Testing
 
 - Run the Catch2 suite with `xmake test --output-on-failure`. Name test files `*_tests.cpp` and describe the observable behavior in each test case name.
+- Run a focused group with `xmake run app_tests '[config]'` or another Catch2 tag. Use `xmake f -m debug -o build/sanitized --sanitizers=y` for local ASan and UBSan checks. See the README for the full commands.
 - Give each test case one behavior or a closely related scenario. Use separate cases for successful operations, expected errors, and edge conditions. Keep related assertions together when they verify the same outcome.
 - Keep cases independent of execution order. Share fixture setup where it reduces duplication, and give each case isolated mutable state, such as its own in-memory SQLite database or temporary directory.
 - Use loopback fixtures for HTTP integration tests and upstream calls. Smoke-test changes to the demo page and verify returned download links when applicable.

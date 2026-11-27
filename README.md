@@ -34,11 +34,43 @@ On macOS, Xmake can also find Xcode's formatter through `xcrun`. For a
 format-only pass, run `xmake build format_cpp`. Xmake and editors such as
 Neovim with `clangd` use the root `.clang-format`.
 
-Open <http://127.0.0.1:8080> and sign in with the local demo credentials `test_user` / `test_password`. Run the test suite from the project root:
+Builds also refresh `build/compile_commands.json` for the active Xmake
+configuration. The repo's `.clangd` points clangd there. To refresh the database
+manually, run `xmake project -k compile_commands build`.
+
+Open <http://127.0.0.1:8080> and sign in with the local demo credentials
+`test_user` / `test_password`. Run the full Catch2 suite or a focused group:
 
 ```sh
-xmake test
+xmake test --output-on-failure
+xmake run app_tests '[config]'
 ```
+
+Other test tags include `[social]`, `[crud]`, `[http]`, `[upload]`, and `[content]`.
+
+## Enable or disable sanitizers
+
+AddressSanitizer (ASan) and UndefinedBehaviorSanitizer (UBSan) are **off by
+default**. Xmake saves the setting for subsequent builds.
+
+**Enable both for debug**
+
+```sh
+xmake f -m debug -o build/sanitized --sanitizers=y
+```
+
+**Disable both and stay in debug**
+
+```sh
+xmake f -m debug -o build --sanitizers=n
+```
+
+These commands only configure Xmake. The next build or `xmake run app_server`
+compiles with the selected setting. Use `-m release` with `--sanitizers=n` when
+configuring a release build.
+
+With sanitizers enabled, run `UBSAN_OPTIONS=halt_on_error=1 xmake test --output-on-failure`
+to stop the test binary at the first UBSan report.
 
 ## Project layout
 
