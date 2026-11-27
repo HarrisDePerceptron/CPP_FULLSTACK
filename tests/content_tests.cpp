@@ -20,7 +20,7 @@ using namespace APP_NAMESPACE;
 using namespace std::chrono_literals;
 
 class LocalResponse {
-public:
+  public:
     LocalResponse(std::string status, std::string body,
                   std::chrono::milliseconds delay = 0ms) {
         listener_ = socket(AF_INET, SOCK_STREAM, 0);
@@ -29,7 +29,8 @@ public:
         address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         socklen_t size = sizeof(address);
 
-        if (listener_ < 0) throw std::runtime_error("could not create fixture socket");
+        if (listener_ < 0)
+            throw std::runtime_error("could not create fixture socket");
         try {
             if (bind(listener_, reinterpret_cast<sockaddr*>(&address), size) != 0 ||
                 listen(listener_, 1) != 0 ||
@@ -38,8 +39,9 @@ public:
             }
             port_ = ntohs(address.sin_port);
             const auto response = "HTTP/1.1 " + status + "\r\nContent-Type: application/json\r\n"
-                "Connection: close\r\nContent-Length: " + std::to_string(body.size()) +
-                "\r\n\r\n" + body;
+                                                         "Connection: close\r\nContent-Length: " +
+                                  std::to_string(body.size()) +
+                                  "\r\n\r\n" + body;
             thread_ = std::thread([this, response, delay] { reply(response, delay); });
         } catch (...) {
             close(listener_);
@@ -54,12 +56,14 @@ public:
 
     std::string origin() const { return "http://127.0.0.1:" + std::to_string(port_); }
 
-private:
+  private:
     void reply(std::string_view response, std::chrono::milliseconds delay) const {
         pollfd incoming{listener_, POLLIN, 0};
-        if (poll(&incoming, 1, 3000) <= 0) return;
+        if (poll(&incoming, 1, 3000) <= 0)
+            return;
         const int client = accept(listener_, nullptr, nullptr);
-        if (client == -1) return;
+        if (client == -1)
+            return;
 
 #ifdef SO_NOSIGPIPE
         constexpr int enabled = 1;
@@ -74,7 +78,8 @@ private:
             std::this_thread::sleep_for(delay);
             while (!response.empty()) {
                 const auto sent = send(client, response.data(), response.size(), send_flags);
-                if (sent <= 0) break;
+                if (sent <= 0)
+                    break;
                 response.remove_prefix(static_cast<std::size_t>(sent));
             }
         }

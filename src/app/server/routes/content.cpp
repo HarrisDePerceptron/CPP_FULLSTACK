@@ -13,7 +13,8 @@ using namespace drogon;
 
 Task<HttpResponsePtr> content(std::shared_ptr<Services> services, HttpRequestPtr request) {
     const auto result = co_await fetch_content();
-    if (result) co_return api_ok(*request, *result);
+    if (result)
+        co_return api_ok(*request, *result);
 
     if (result.error() == ContentError::timeout) {
         services->log.write(LogLevel::warn, "Content provider timed out");
@@ -28,7 +29,8 @@ Task<HttpResponsePtr> content(std::shared_ptr<Services> services, HttpRequestPtr
 void register_content_routes(drogon::HttpAppFramework& server, const std::shared_ptr<Services>& services) {
     server.registerHandler("/api/content", [services](HttpRequestPtr request) {
         return content(services, std::move(request));
-    }, {Get});
+    },
+                           {Get});
 }
 
 }

@@ -28,6 +28,12 @@ xmake
 xmake run app_server
 ```
 
+Xmake formats C++ files in `src/` and `tests/` before compilation, including
+the automatic build in `xmake run app_server`. Install `clang-format` on `PATH`.
+On macOS, Xmake can also find Xcode's formatter through `xcrun`. For a
+format-only pass, run `xmake build format_cpp`. Xmake and editors such as
+Neovim with `clangd` use the root `.clang-format`.
+
 Open <http://127.0.0.1:8080> and sign in with the local demo credentials `test_user` / `test_password`. Run the test suite from the project root:
 
 ```sh
@@ -40,7 +46,7 @@ xmake test
 | --- | --- |
 | `src/framework/` | Reusable configuration, database, CRUD, HTTP, JWT, upload storage, logging, and worker code |
 | `src/main.cpp` | Application entry point |
-| `src/app/` | Demo application organized into server, services, DAO, and model layers |
+| `src/app/` | Demo application organized into server, service, and DAO layers |
 | `src/app/config.h` | Application settings, defaults, and validation |
 | `views/` | Drogon CSP templates compiled by Xmake |
 | `public/` | Browser JavaScript, Tailwind source and generated CSS, and runtime uploads |
@@ -51,9 +57,11 @@ features and links to it. Run `xmake build template_core` to build the shared
 library on its own.
 
 To add a feature, put its HTTP handlers in `src/app/server/routes/`, business
-logic in `src/app/services/`, and persistence in `src/app/dao/`. Put persisted
-records and DTOs in separate headers under `src/app/models/`. Use the public
-framework headers for persistence, CRUD, or HTTP responses. Wire the feature
+logic and service input or result types in `src/app/services/`, and persistence in
+`src/app/dao/`. Keep each persisted entity and its query result types together in a
+header under `src/app/dao/records/`. Put HTTP-only
+request and response DTOs in `src/app/server/dto/`. Use the public framework
+headers for persistence, CRUD, or HTTP responses. Wire the feature
 into the service container and route registration in `src/app/server/`.
 
 `src/app/server/server.h` contains `serve()` and its inline startup helpers
@@ -367,7 +375,7 @@ optional public `void validate() const`.
 
 ## Development rules
 
-- Keep `.h` files beside their `.cpp` implementations. Use four spaces and put opening braces on the declaration line.
+- Keep `.h` files beside their `.cpp` implementations. Use the root `.clang-format`, which sets four-space indentation and puts opening braces on the declaration line.
 - Use `snake_case` for project-owned C++ functions, methods, variables, fields, constants, and enum values. Use `PascalCase` for types. Keep macro names, third-party API names, and existing JSON, configuration, and database names stable.
 - Keep route handlers small. Delegate persistence and outbound calls, use `co_await` for asynchronous work, `api_ok` and `api_error` for typed JSON replies, and `std::println` for console output.
 - After editing a view or Tailwind source, run `npm ci` and `npm run build:css` with Node.js installed. Include the regenerated `public/demo.css` in the change.

@@ -16,7 +16,7 @@ struct CrudPage {
 
 template <typename Dao, typename Resource>
 class CrudService {
-public:
+  public:
     using Policy = Resource;
     using Record = typename Dao::RecordType;
     using Id = typename Record::Id;
@@ -32,13 +32,15 @@ public:
         const auto rows = co_await dao_.find().limit(page.limit).offset(page.offset).matching(std::move(filters)).collect();
         std::vector<Response> result;
         result.reserve(rows.size());
-        for (const auto& row : rows) result.push_back(Resource::to_response(row));
+        for (const auto& row : rows)
+            result.push_back(Resource::to_response(row));
         co_return result;
     }
 
     virtual drogon::Task<std::optional<Response>> get(Id id) const {
         const auto row = co_await dao_.find_by_id(std::move(id)).collect();
-        if (!row) co_return std::nullopt;
+        if (!row)
+            co_return std::nullopt;
         co_return Resource::to_response(*row);
     }
 
@@ -47,7 +49,8 @@ public:
         co_await dao_.transaction([&](DaoTransaction& tx) -> drogon::Task<> {
             const auto id = co_await dao_.create(tx, Resource::make_record(std::move(input)));
             const auto row = co_await dao_.find_by_id(tx, id).collect();
-            if (!row) throw std::logic_error("Created row could not be read");
+            if (!row)
+                throw std::logic_error("Created row could not be read");
             result.emplace(Resource::to_response(*row));
         });
         co_return std::move(result).value();
@@ -57,11 +60,14 @@ public:
         std::optional<Response> result;
         co_await dao_.transaction([&](DaoTransaction& tx) -> drogon::Task<> {
             auto row = co_await dao_.find_by_id(tx, id).collect();
-            if (!row) co_return;
+            if (!row)
+                co_return;
             Resource::apply_patch(*row, std::move(input));
-            if (!co_await dao_.update(tx, std::move(*row))) throw std::logic_error("Patch target disappeared");
+            if (!co_await dao_.update(tx, std::move(*row)))
+                throw std::logic_error("Patch target disappeared");
             const auto updated = co_await dao_.find_by_id(tx, id).collect();
-            if (!updated) throw std::logic_error("Updated row could not be read");
+            if (!updated)
+                throw std::logic_error("Updated row could not be read");
             result.emplace(Resource::to_response(*updated));
         });
         co_return result;
@@ -71,10 +77,10 @@ public:
         return dao_.delete_by_id(std::move(id));
     }
 
-protected:
+  protected:
     const Dao& dao() const { return dao_; }
 
-private:
+  private:
     Dao dao_;
 };
 

@@ -39,10 +39,12 @@ void validate_url_prefix(std::string_view prefix) {
         prefix.remove_prefix(1);
         while (!prefix.empty()) {
             const auto end = prefix.find('/');
-            if (!valid_url_segment(prefix.substr(0, end))) break;
+            if (!valid_url_segment(prefix.substr(0, end)))
+                break;
             prefix.remove_prefix(end + 1);
         }
-        if (prefix.empty()) return;
+        if (prefix.empty())
+            return;
     }
     throw std::runtime_error("server.public_url_prefix must be a literal path with leading and trailing slashes");
 }
@@ -52,7 +54,8 @@ fs::path resolve_directory(const fs::path& root, const std::string& value, std::
         throw std::runtime_error(std::string(name) + " must be a directory path");
     }
     auto path = fs::weakly_canonical(root / value);
-    if (path != path.root_path() && path.filename().empty()) path = path.parent_path();
+    if (path != path.root_path() && path.filename().empty())
+        path = path.parent_path();
     return path;
 }
 
@@ -62,8 +65,10 @@ bool contains_path(const fs::path& directory, const fs::path& path) {
 
 bool contains_existing_directory(const fs::path& directory, fs::path path) {
     for (;;) {
-        if (fs::equivalent(directory, path)) return true;
-        if (path == path.root_path()) return false;
+        if (fs::equivalent(directory, path))
+            return true;
+        if (path == path.root_path())
+            return false;
         path = path.parent_path();
     }
 }
@@ -113,7 +118,8 @@ void register_shutdown(drogon::HttpAppFramework& server, std::shared_ptr<Workers
     server.registerBeginningAdvice([&server, stopping, workers = std::move(workers)] {
         server.getLoop()->runEvery(0.1, [&server, stopping, workers] {
             if (stopping->test()) {
-                if (workers) workers->stop();
+                if (workers)
+                    workers->stop();
                 server.quit();
             }
         });
@@ -137,7 +143,8 @@ int run_http_server(drogon::HttpAppFramework& server, const fs::path& root,
                     const ServerConfig& config, const ServerSetup& setup) {
     config.validate();
     const auto resolved = resolve_config(root, config);
-    if (sodium_init() < 0) throw std::runtime_error("could not initialize libsodium");
+    if (sodium_init() < 0)
+        throw std::runtime_error("could not initialize libsodium");
 
     fs::create_directories(resolved.document_root);
     fs::create_directories(resolved.request_cache_directory);

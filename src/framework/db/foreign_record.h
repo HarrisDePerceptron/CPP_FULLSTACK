@@ -10,13 +10,13 @@ namespace APP_NAMESPACE {
 
 template <typename Record, bool nullable = true>
 class Foreign {
-public:
+  public:
     using TargetRecord = Record;
     using Key = std::conditional_t<nullable, std::optional<typename Record::Id>, typename Record::Id>;
 
     Foreign() = default;
     template <typename U>
-        requires (!std::same_as<std::remove_cvref_t<U>, Foreign>) && std::constructible_from<Key, U>
+        requires(!std::same_as<std::remove_cvref_t<U>, Foreign>) && std::constructible_from<Key, U>
     Foreign(U&& key) : key_(std::forward<U>(key)) {}
 
     const Key& key() const { return key_; }
@@ -33,7 +33,8 @@ public:
     drogon::Task<bool> load(const Dao& dao, const Context&... context) {
         record_.reset();
         if constexpr (nullable) {
-            if (!key_) co_return false;
+            if (!key_)
+                co_return false;
             record_ = co_await dao.find_by_id(context..., *key_).collect();
         } else {
             record_ = co_await dao.find_by_id(context..., key_).collect();
@@ -41,7 +42,7 @@ public:
         co_return record_.has_value();
     }
 
-private:
+  private:
     Key key_{};
     std::optional<Record> record_;
 };
@@ -78,8 +79,7 @@ struct ForeignSelection {
 
 template <auto member, typename Source, typename Dao>
 concept ForeignSelectionFor = requires(Source& source) {
-    requires std::same_as<typename std::remove_reference_t<decltype(
-        foreign_field(source.*member))>::TargetRecord, typename Dao::RecordType>;
+    requires std::same_as<typename std::remove_reference_t<decltype(foreign_field(source.*member))>::TargetRecord, typename Dao::RecordType>;
 };
 
 template <typename Record, bool nullable>

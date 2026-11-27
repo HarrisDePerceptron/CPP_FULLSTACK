@@ -28,12 +28,18 @@ struct GlazeTraits {
 
     static jwt::json::type get_type(const value_type& value) {
         using jwt::json::type;
-        if (value.is_object()) return type::object;
-        if (value.is_array()) return type::array;
-        if (value.is_string()) return type::string;
-        if (value.holds<integer_type>()) return type::integer;
-        if (value.holds<number_type>()) return type::number;
-        if (value.is_boolean()) return type::boolean;
+        if (value.is_object())
+            return type::object;
+        if (value.is_array())
+            return type::array;
+        if (value.is_string())
+            return type::string;
+        if (value.holds<integer_type>())
+            return type::integer;
+        if (value.holds<number_type>())
+            return type::number;
+        if (value.is_boolean())
+            return type::boolean;
         throw std::invalid_argument("invalid JWT JSON claim type");
     }
 
@@ -50,7 +56,8 @@ struct GlazeTraits {
 
     static string_type serialize(const value_type& value) {
         auto text = glz::write_json(value);
-        if (!text) throw std::runtime_error("could not serialize JWT");
+        if (!text)
+            throw std::runtime_error("could not serialize JWT");
         return std::move(*text);
     }
 };
@@ -86,7 +93,8 @@ std::string Tokens::issue(std::string_view username) const {
 }
 
 std::optional<std::string> Tokens::verify(std::string_view token) const {
-    if (token.empty() || token.size() > 4096) return std::nullopt;
+    if (token.empty() || token.size() > 4096)
+        return std::nullopt;
     try {
         const auto decoded = jwt::decode<GlazeTraits>(std::string(token));
         jwt::verify<GlazeTraits>()
@@ -98,7 +106,8 @@ std::optional<std::string> Tokens::verify(std::string_view token) const {
             return std::nullopt;
         }
         auto username = decoded.get_subject();
-        if (username.empty()) return std::nullopt;
+        if (username.empty())
+            return std::nullopt;
         return username;
     } catch (const std::exception&) {
         return std::nullopt;

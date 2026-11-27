@@ -29,7 +29,8 @@ drogon::Task<std::expected<Content, ContentError>> fetch_content(
             std::move(request), std::chrono::duration<double>(timeout).count());
     } catch (const drogon::HttpException& error) {
         co_return std::unexpected(error.code() == drogon::ReqResult::Timeout
-            ? ContentError::timeout : ContentError::upstream);
+                                      ? ContentError::timeout
+                                      : ContentError::upstream);
     }
 
     constexpr std::size_t body_limit = 256 * 1024;

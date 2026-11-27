@@ -20,12 +20,13 @@ std::string hash_password(std::string_view password) {
 
 }
 
-
 drogon::Task<std::optional<Credentials>> UserService::seed_demo() const {
-    if (co_await dao_.has_demo()) co_return std::nullopt;
+    if (co_await dao_.has_demo())
+        co_return std::nullopt;
 
     Credentials credentials{"demo-" + random_hex<6>(), random_hex<16>()};
-    if (!co_await dao_.insert_demo(credentials.username, hash_password(credentials.password))) co_return std::nullopt;
+    if (!co_await dao_.insert_demo(credentials.username, hash_password(credentials.password)))
+        co_return std::nullopt;
     co_return credentials;
 }
 
@@ -45,7 +46,8 @@ drogon::Task<bool> UserService::signup(Credentials credentials, Workers& workers
 
 drogon::Task<bool> UserService::authenticate(std::string username, std::string password, Workers& workers) const {
     const auto user = co_await dao_.find_by_username(std::move(username));
-    if (!user) co_return false;
+    if (!user)
+        co_return false;
     co_return co_await workers.submit([&] {
         return crypto_pwhash_str_verify(user->password_hash.c_str(), password.data(), password.size()) == 0;
     });

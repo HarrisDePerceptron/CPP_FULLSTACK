@@ -20,12 +20,12 @@
 namespace APP_NAMESPACE {
 
 class WorkersBusy : public std::runtime_error {
-public:
+  public:
     WorkersBusy() : std::runtime_error("worker queue is full or closed") {}
 };
 
 class Workers {
-public:
+  public:
     Workers() {
         try {
             for (int index = 0; index < 4; ++index) {
@@ -39,7 +39,7 @@ public:
 
     ~Workers() { stop(); }
 
-    template<class Work>
+    template <class Work>
     auto submit(Work work) {
         return Awaiter<Work>{*this, std::move(work), std::nullopt, {}};
     }
@@ -50,12 +50,13 @@ public:
             closed_ = true;
         }
         ready_.notify_all();
-        for (auto& thread : threads_) thread.join();
+        for (auto& thread : threads_)
+            thread.join();
         threads_.clear();
     }
 
-private:
-    template<class Work>
+  private:
+    template <class Work>
     struct Awaiter {
         Workers& workers;
         Work work;
@@ -66,7 +67,8 @@ private:
 
         void await_suspend(std::coroutine_handle<> continuation) {
             auto* loop = trantor::EventLoop::getEventLoopOfCurrentThread();
-            if (!loop) throw std::logic_error("worker await requires an event loop");
+            if (!loop)
+                throw std::logic_error("worker await requires an event loop");
             workers.enqueue([this, loop, continuation] {
                 try {
                     result.emplace(work());
@@ -78,7 +80,8 @@ private:
         }
 
         auto await_resume() {
-            if (error) std::rethrow_exception(error);
+            if (error)
+                std::rethrow_exception(error);
             return std::move(*result);
         }
     };
@@ -86,7 +89,8 @@ private:
     void enqueue(std::function<void()> job) {
         {
             std::lock_guard lock(mutex_);
-            if (closed_ || pending_.size() >= 16) throw WorkersBusy{};
+            if (closed_ || pending_.size() >= 16)
+                throw WorkersBusy{};
             pending_.push(std::move(job));
         }
         ready_.notify_one();
@@ -98,7 +102,8 @@ private:
             {
                 std::unique_lock lock(mutex_);
                 ready_.wait(lock, [this] { return closed_ || !pending_.empty(); });
-                if (pending_.empty()) return;
+                if (pending_.empty())
+                    return;
                 job = std::move(pending_.front());
                 pending_.pop();
             }

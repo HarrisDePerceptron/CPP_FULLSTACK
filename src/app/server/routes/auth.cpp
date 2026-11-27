@@ -1,4 +1,4 @@
-#include "app/models/account_models.h"
+#include "app/server/dto/account_dtos.h"
 #include "app/server/routes.h"
 #include "app/server/services.h"
 #include "framework/auth/jwt_middleware.h"
@@ -84,10 +84,12 @@ void register_auth_routes(drogon::HttpAppFramework& server, const std::shared_pt
                           const std::string& jwt) {
     server.registerHandler("/api/signup", [services](HttpRequestPtr request) {
         return signup(services, std::move(request));
-    }, {Post});
+    },
+                           {Post});
     server.registerHandler("/api/login", [services](HttpRequestPtr request) {
         return login(services, std::move(request));
-    }, {Post});
+    },
+                           {Post});
     server.registerHandler("/api/logout", &logout, {Post});
     server.registerHandler("/api/me", &current_user, {Get, jwt});
 }

@@ -15,8 +15,13 @@ namespace APP_NAMESPACE {
 
 inline int serve(const std::filesystem::path& root) {
     const auto config = load_config<Config>(root);
-    return run_http_server(drogon::app(), root, config.server,
-        [&config](auto& server, const ResolvedServerConfig& resolved, const Logger& log) {
+
+    auto& app = drogon::app();
+
+    return run_http_server(
+        app, root, config.server,
+        [&config](auto& server, const ResolvedServerConfig& resolved,
+                  const Logger& log) {
             const auto services = initialize_services(resolved, config, log);
             register_app_routes(server, services, resolved);
             return std::shared_ptr<Workers>(services, &services->workers);

@@ -14,25 +14,31 @@ auto BaseDao<Derived, Record, options>::finish_initialization(Derived dao) -> dr
 template <typename Derived, typename Record, DaoOptions options>
 BaseDao<Derived, Record, options>::BaseDao(DatabaseBackendPtr database)
     : database_(std::move(database)), table_name_(Fields::table_name), table_(detail::quote_identifier(table_name_)) {
-    if (!database_) throw std::invalid_argument("DAO requires a database backend");
+    if (!database_)
+        throw std::invalid_argument("DAO requires a database backend");
     build_schema(indices_);
     std::string projection, columns, placeholders, assignments, key_parameter;
     std::size_t insert_index = 0, update_index = 0;
     std::size_t flag_index = names_.size() + Record::generated_id;
     for (const auto& field : schema_) {
         const auto column = detail::quote_identifier(field.name);
-        if (!projection.empty()) projection += ", ";
+        if (!projection.empty())
+            projection += ", ";
         projection += column;
-        if (field.nullable) optional_columns_.push_back(field.name);
-        else append_column(required_projection_, column);
-        if (field.timestamp || field.name == "deleted_at") continue;
+        if (field.nullable)
+            optional_columns_.push_back(field.name);
+        else
+            append_column(required_projection_, column);
+        if (field.timestamp || field.name == "deleted_at")
+            continue;
 
         const auto marker = parameter(++update_index);
         if (field.primary) {
             key_ = column;
             key_parameter = marker;
         } else {
-            if (!assignments.empty()) assignments += ", ";
+            if (!assignments.empty())
+                assignments += ", ";
             assignments += column + " = ";
             if (field.nullable) {
                 assignments += "CASE WHEN " + parameter(++flag_index) + " THEN " + marker +
@@ -50,12 +56,15 @@ BaseDao<Derived, Record, options>::BaseDao(DatabaseBackendPtr database)
             placeholders += parameter(++insert_index);
         }
     }
-    if (assignments.empty()) assignments = key_ + " = " + key_;
+    if (assignments.empty())
+        assignments = key_ + " = " + key_;
     update_ = "UPDATE " + table_ + " SET " + assignments + " WHERE " + key_ + " = " + key_parameter + " AND deleted_at IS NULL";
     select_ = "SELECT " + projection + " FROM " + table_;
     insert_ = "INSERT INTO " + table_;
-    if (columns.empty()) insert_ += " DEFAULT VALUES";
-    else insert_ += " (" + columns + ") VALUES (" + placeholders + ")";
+    if (columns.empty())
+        insert_ += " DEFAULT VALUES";
+    else
+        insert_ += " (" + columns + ") VALUES (" + placeholders + ")";
 }
 
 template <typename Derived, typename Record, DaoOptions options>
@@ -89,8 +98,8 @@ auto BaseDao<Derived, Record, options>::add_field() -> void {
                   "reserved DAO fields are inherited");
     static_assert(!Traits<index>::foreign_key() || !Traits<index>::primary, "foreign fields cannot be primary keys");
     auto field = DatabaseColumn{std::string(name), detail::column_type<typename Value<index>::Type>(),
-                       Value<index>::nullable, Traits<index>::primary, Traits<index>::unique, Traits<index>::indexed,
-                       Traits<index>::default_metadata()};
+                                Value<index>::nullable, Traits<index>::primary, Traits<index>::unique, Traits<index>::indexed,
+                                Traits<index>::default_metadata()};
     field.foreign_key = Traits<index>::foreign_key();
     using Scalar = typename Value<index>::Type;
     if constexpr (std::is_scoped_enum_v<Scalar>) {

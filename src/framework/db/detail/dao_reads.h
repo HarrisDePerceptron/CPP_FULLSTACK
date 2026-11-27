@@ -6,9 +6,9 @@ namespace APP_NAMESPACE {
 
 template <typename Derived, typename Record, DaoOptions options>
 auto BaseDao<Derived, Record, options>::read_by_id(TransactionScope tx, Id id, bool include) const -> drogon::Task<std::optional<Record>> {
-    const auto rows = co_await execute(tx, select_ + " WHERE " + key_ + " = " + parameter(1) +
-        (include ? "" : " AND deleted_at IS NULL"), own_argument(std::move(id)));
-    if (rows.empty()) co_return std::nullopt;
+    const auto rows = co_await execute(tx, select_ + " WHERE " + key_ + " = " + parameter(1) + (include ? "" : " AND deleted_at IS NULL"), own_argument(std::move(id)));
+    if (rows.empty())
+        co_return std::nullopt;
     co_return map_row(rows[0]);
 }
 
@@ -43,14 +43,16 @@ auto BaseDao<Derived, Record, options>::count_records(TransactionScope tx, bool 
 template <typename Derived, typename Record, DaoOptions options>
 auto BaseDao<Derived, Record, options>::map_row(const drogon::orm::Row& row, std::vector<std::string> omitted) const -> Record {
     if constexpr (!options.timestamps) {
-        for (const auto name : timestamp_names_) omitted.emplace_back(name);
+        for (const auto name : timestamp_names_)
+            omitted.emplace_back(name);
     }
     auto fields = row_to_struct<Fields>(row, omitted);
     Record result(std::move(fields), std::move(omitted));
     if (result.is_column_loaded("deleted_at")) {
         detail::read_row_field(result.deleted_at, row.at("deleted_at"), "deleted_at");
     }
-    if constexpr (Record::generated_id) result.id = row.at("id").template as<Id>();
+    if constexpr (Record::generated_id)
+        result.id = row.at("id").template as<Id>();
     if constexpr (options.timestamps) {
         if (result.is_column_loaded("created_at")) {
             detail::read_row_field(result.created_at, row.at("created_at"), "created_at");
@@ -98,7 +100,8 @@ template <typename Derived, typename Record, DaoOptions options>
 template <auto... members>
 auto BaseDao<Derived, Record, options>::collect(FindQuery& query, detail::SelectFields<members...>) -> auto {
     ((require_enabled_column(glz::get_name<members>()),
-      query.selected.push_back(glz::get_name<members>())), ...);
+      query.selected.push_back(glz::get_name<members>())),
+     ...);
     return std::tuple{};
 }
 
@@ -145,8 +148,7 @@ auto BaseDao<Derived, Record, options>::read_foreign_batch(
             values.push_back(query_value(*next++));
             append_column(placeholders, parameter(values.size()));
         }
-        auto rows = co_await execute_bound(tx, select_ + " WHERE " + key_ +
-            " IN (" + placeholders + ") AND deleted_at IS NULL", std::move(values));
+        auto rows = co_await execute_bound(tx, select_ + " WHERE " + key_ + " IN (" + placeholders + ") AND deleted_at IS NULL", std::move(values));
         for (const auto& row : rows) {
             auto key = detail::read_scalar<Id>(row.at(key_name));
             records.emplace(std::move(key), map_row(row));
@@ -158,21 +160,25 @@ auto BaseDao<Derived, Record, options>::read_foreign_batch(
 template <typename Derived, typename Record, DaoOptions options>
 template <auto member, typename Dao>
 auto BaseDao<Derived, Record, options>::load_foreign_page(TransactionScope tx, std::vector<Record>& records,
-                                       detail::ForeignSelection<member, Dao> selection) -> drogon::Task<> {
+                                                          detail::ForeignSelection<member, Dao> selection) -> drogon::Task<> {
     using TargetId = typename Dao::RecordType::Id;
     std::set<TargetId> keys;
     for (auto& record : records) {
         const std::optional<TargetId> key(detail::foreign_field(record.*member).key());
-        if (key) keys.insert(*key);
+        if (key)
+            keys.insert(*key);
     }
-    if (keys.empty()) co_return;
+    if (keys.empty())
+        co_return;
     const auto targets = co_await selection.dao.get().read_foreign_batch(tx, keys);
     for (auto& record : records) {
         auto& field = detail::foreign_field(record.*member);
         const std::optional<TargetId> key(field.key());
-        if (!key) continue;
+        if (!key)
+            continue;
         const auto target = targets.find(*key);
-        if (target != targets.end()) field.set_record(target->second);
+        if (target != targets.end())
+            field.set_record(target->second);
     }
 }
 
@@ -180,27 +186,33 @@ template <typename Derived, typename Record, DaoOptions options>
 template <typename... Modifiers>
 auto BaseDao<Derived, Record, options>::find_page(
     TransactionScope tx, std::int64_t limit, std::int64_t offset, Modifiers... modifiers) const -> drogon::Task<std::vector<Record>> {
-    if (limit <= 0 || offset < 0) throw std::invalid_argument("invalid pagination");
+    if (limit <= 0 || offset < 0)
+        throw std::invalid_argument("invalid pagination");
     const auto foreign = std::tuple_cat(foreign_selection(modifiers)...);
     const auto same_backend = std::apply([&](const auto&... selections) {
         return (selections.dao.get().uses_backend(database_) && ...);
-    }, foreign);
-    if (!same_backend) throw std::invalid_argument("foreign DAOs must use the same database backend");
+    },
+                                         foreign);
+    if (!same_backend)
+        throw std::invalid_argument("foreign DAOs must use the same database backend");
 
     FindQuery query;
     // Collect left to right so explicit sort fields retain the caller's order.
     auto parts = std::tuple<decltype(collect(query, modifiers))...>{collect(query, modifiers)...};
     const auto predicates = std::apply([](auto&&... part) {
         return std::tuple_cat(std::move(part)...);
-    }, parts);
+    },
+                                       parts);
 
     std::string sql = select_;
     std::vector<std::string> omitted;
     if (!query.all) {
         auto projection = required_projection_;
         for (const auto& name : optional_columns_) {
-            if (std::ranges::find(query.selected, name) == query.selected.end()) omitted.push_back(name);
-            else append_column(projection, detail::quote_identifier(name));
+            if (std::ranges::find(query.selected, name) == query.selected.end())
+                omitted.push_back(name);
+            else
+                append_column(projection, detail::quote_identifier(name));
         }
         sql = "SELECT " + projection + " FROM " + table_;
     }
@@ -213,7 +225,7 @@ auto BaseDao<Derived, Record, options>::find_page(
     std::string ordering;
     for (const auto& [name, direction] : query.ordering) {
         append_column(ordering, detail::quote_identifier(name) +
-            (direction == SortDirection::desc ? " DESC NULLS LAST" : " ASC NULLS LAST"));
+                                    (direction == SortDirection::desc ? " DESC NULLS LAST" : " ASC NULLS LAST"));
     }
     std::vector<detail::QueryValue> values;
     std::apply([&](const auto&... predicates) { append_where(sql, values, query.include_deleted, predicates...); }, predicates);
@@ -233,7 +245,8 @@ auto BaseDao<Derived, Record, options>::find_page(
 
     std::vector<Record> records;
     records.reserve(rows.size());
-    for (const auto& row : rows) records.push_back(map_row(row, omitted));
+    for (const auto& row : rows)
+        records.push_back(map_row(row, omitted));
     if constexpr (std::tuple_size_v<decltype(foreign)> > 0) {
         const auto load = [&](const auto&... selections) -> drogon::Task<> {
             (co_await load_foreign_page(tx, records, selections), ...);
@@ -246,7 +259,7 @@ auto BaseDao<Derived, Record, options>::find_page(
 template <typename Derived, typename Record, DaoOptions options>
 template <auto member>
 auto BaseDao<Derived, Record, options>::predicate_sql(const detail::DaoPredicate<member>& predicate,
-                         std::vector<detail::QueryValue>& values) const -> std::string {
+                                                      std::vector<detail::QueryValue>& values) const -> std::string {
     using detail::PredicateOp;
     require_enabled_column(predicate.name);
     const auto column = detail::quote_identifier(predicate.name);
@@ -264,29 +277,44 @@ auto BaseDao<Derived, Record, options>::predicate_sql(const detail::DaoPredicate
             }
         }
         expression = list.empty() ? "FALSE" : column + " IN (" + list + ")";
-        if (includes_null) expression += " OR " + column + " IS NULL";
+        if (includes_null)
+            expression += " OR " + column + " IS NULL";
     } else {
         values.push_back(query_value(static_cast<typename detail::DaoPredicate<member>::Value>(
             predicate.values.front())));
         const auto index = values.size();
         switch (predicate.operation) {
-            case PredicateOp::eq: expression = database_->null_safe_equal(column, index); break;
-            case PredicateOp::gt: expression = column + " > " + parameter(index); break;
-            case PredicateOp::gte: expression = column + " >= " + parameter(index); break;
-            case PredicateOp::lt: expression = column + " < " + parameter(index); break;
-            case PredicateOp::lte: expression = column + " <= " + parameter(index); break;
-            case PredicateOp::contains: expression = database_->contains_text(column, index); break;
-            case PredicateOp::in: break;
+        case PredicateOp::eq:
+            expression = database_->null_safe_equal(column, index);
+            break;
+        case PredicateOp::gt:
+            expression = column + " > " + parameter(index);
+            break;
+        case PredicateOp::gte:
+            expression = column + " >= " + parameter(index);
+            break;
+        case PredicateOp::lt:
+            expression = column + " < " + parameter(index);
+            break;
+        case PredicateOp::lte:
+            expression = column + " <= " + parameter(index);
+            break;
+        case PredicateOp::contains:
+            expression = database_->contains_text(column, index);
+            break;
+        case PredicateOp::in:
+            break;
         }
     }
-    if (predicate.negated) return "NOT COALESCE((" + expression + "), FALSE)";
+    if (predicate.negated)
+        return "NOT COALESCE((" + expression + "), FALSE)";
     return "(" + expression + ")";
 }
 
 template <typename Derived, typename Record, DaoOptions options>
 template <auto first, auto second>
 auto BaseDao<Derived, Record, options>::predicate_sql(const detail::DaoTupleLess<first, second>& predicate,
-                         std::vector<detail::QueryValue>& values) const -> std::string {
+                                                      std::vector<detail::QueryValue>& values) const -> std::string {
     constexpr auto first_column = glz::get_name<first>();
     constexpr auto second_column = glz::get_name<second>();
     require_enabled_column(first_column);
@@ -302,8 +330,9 @@ auto BaseDao<Derived, Record, options>::predicate_sql(const detail::DaoTupleLess
 template <typename Derived, typename Record, DaoOptions options>
 template <typename... Predicates>
 auto BaseDao<Derived, Record, options>::append_where(std::string& sql, std::vector<detail::QueryValue>& values, bool include,
-                 const Predicates&... predicates) const -> void {
-    if (!include) sql += " WHERE deleted_at IS NULL";
+                                                     const Predicates&... predicates) const -> void {
+    if (!include)
+        sql += " WHERE deleted_at IS NULL";
     if constexpr (sizeof...(Predicates) > 0) {
         auto separator = include ? " WHERE " : " AND ";
         auto append = [&](const auto& predicate) {

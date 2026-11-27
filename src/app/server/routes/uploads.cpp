@@ -1,4 +1,4 @@
-#include "app/models/upload_models.h"
+#include "app/server/dto/upload_dtos.h"
 #include "app/server/routes.h"
 #include "app/server/services.h"
 #include "framework/http/json_response.h"
@@ -14,7 +14,7 @@ using namespace drogon;
 Task<HttpResponsePtr> upload(std::shared_ptr<Services> services, HttpRequestPtr request,
                              const std::string& uploads_url_prefix) {
     const auto saved = co_await services->workers.submit([&]
-        -> std::expected<std::string, UploadError> {
+                                                         -> std::expected<std::string, UploadError> {
         MultiPartParser parser;
         if (parser.parse(request) != 0 || parser.getFiles().size() != 1 ||
             parser.getFiles().front().getItemName() != "file") {
@@ -25,16 +25,16 @@ Task<HttpResponsePtr> upload(std::shared_ptr<Services> services, HttpRequestPtr 
 
     if (!saved) {
         switch (saved.error()) {
-            case UploadError::empty:
-                co_return api_error(*request, k400BadRequest, "VALIDATION_FAILED", "Choose one file to upload.");
-            case UploadError::too_large: {
-                const auto limit = services->uploads.maximum_bytes();
-                auto message = limit == max_upload_bytes ? std::string("The file exceeds 10 MiB.")
-                    : "The file exceeds the " + std::to_string(limit) + " byte limit.";
-                co_return api_error(*request, k413RequestEntityTooLarge, "PAYLOAD_TOO_LARGE", std::move(message));
-            }
-            case UploadError::unsupported:
-                co_return api_error(*request, k415UnsupportedMediaType, "UNSUPPORTED_MEDIA_TYPE", "Choose a PDF or a supported image.");
+        case UploadError::empty:
+            co_return api_error(*request, k400BadRequest, "VALIDATION_FAILED", "Choose one file to upload.");
+        case UploadError::too_large: {
+            const auto limit = services->uploads.maximum_bytes();
+            auto message = limit == max_upload_bytes ? std::string("The file exceeds 10 MiB.")
+                                                     : "The file exceeds the " + std::to_string(limit) + " byte limit.";
+            co_return api_error(*request, k413RequestEntityTooLarge, "PAYLOAD_TOO_LARGE", std::move(message));
+        }
+        case UploadError::unsupported:
+            co_return api_error(*request, k415UnsupportedMediaType, "UNSUPPORTED_MEDIA_TYPE", "Choose a PDF or a supported image.");
         }
     }
 
@@ -48,7 +48,8 @@ Task<HttpResponsePtr> download(std::shared_ptr<Services> services, HttpRequestPt
                                std::string name) {
     co_return co_await services->workers.submit([&] {
         const auto file = services->uploads.find(name);
-        if (!file) return api_error(*request, k404NotFound, "NOT_FOUND", "Upload not found.");
+        if (!file)
+            return api_error(*request, k404NotFound, "NOT_FOUND", "Upload not found.");
         auto response = HttpResponse::newFileResponse(file->first.string(), name, CT_CUSTOM,
                                                       std::string(file->second.mime), request);
         response->addHeader("X-Content-Type-Options", "nosniff");
@@ -62,10 +63,12 @@ void register_upload_routes(drogon::HttpAppFramework& server, const std::shared_
                             const std::string& jwt, const std::string& uploads_url_prefix) {
     server.registerHandler("/api/uploads", [services, uploads_url_prefix](HttpRequestPtr request) {
         return upload(services, std::move(request), uploads_url_prefix);
-    }, {Post, jwt});
+    },
+                           {Post, jwt});
     server.registerHandler(uploads_url_prefix + "{1}", [services](HttpRequestPtr request, std::string name) {
         return download(services, std::move(request), std::move(name));
-    }, {Get});
+    },
+                           {Get});
 }
 
 }

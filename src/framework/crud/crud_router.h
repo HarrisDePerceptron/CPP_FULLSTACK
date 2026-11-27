@@ -22,42 +22,43 @@ struct CrudMethods {
 
 template <std::integral Integer>
 Integer parse_crud_integer(std::string_view text) {
-    if (text.empty()) throw CrudValidationError("Expected an integer.");
+    if (text.empty())
+        throw CrudValidationError("Expected an integer.");
     Integer value{};
     const auto end = text.data() + text.size();
     const auto [next, error] = std::from_chars(text.data(), end, value);
-    if (error != std::errc{} || next != end) throw CrudValidationError("Expected an integer.");
+    if (error != std::errc{} || next != end)
+        throw CrudValidationError("Expected an integer.");
     return value;
 }
 
 template <typename Service>
 class CrudRouter {
-public:
+  public:
     using Response = typename Service::Response;
     using Id = typename Service::Id;
     using Policy = typename Service::Policy;
 
     explicit CrudRouter(std::shared_ptr<const Service> service, CrudMethods methods = {})
         : service_(std::move(service)), methods_(methods) {
-        if (!service_) throw std::invalid_argument("CRUD router requires a service");
+        if (!service_)
+            throw std::invalid_argument("CRUD router requires a service");
     }
     virtual ~CrudRouter() = default;
 
     static void mount(drogon::HttpAppFramework& server, std::string path,
                       std::shared_ptr<const CrudRouter> router,
                       const std::vector<std::string>& middleware = {}) {
-        if (!router) throw std::invalid_argument("CRUD mount requires a router");
+        if (!router)
+            throw std::invalid_argument("CRUD mount requires a router");
         std::vector<drogon::internal::HttpConstraint> constraints;
-        for (const auto& name : middleware) constraints.emplace_back(name);
-        server.registerHandler(path, [router](drogon::HttpRequestPtr request) {
-            return router->dispatch(std::move(request));
-        }, constraints);
-        server.registerHandler(path + "/{1}", [router](drogon::HttpRequestPtr request, std::string id) {
-            return router->dispatch(std::move(request), std::move(id));
-        }, constraints);
+        for (const auto& name : middleware)
+            constraints.emplace_back(name);
+        server.registerHandler(path, [router](drogon::HttpRequestPtr request) { return router->dispatch(std::move(request)); }, constraints);
+        server.registerHandler(path + "/{1}", [router](drogon::HttpRequestPtr request, std::string id) { return router->dispatch(std::move(request), std::move(id)); }, constraints);
     }
 
-protected:
+  protected:
     using Request = drogon::HttpRequest;
     using Items = std::vector<Response>;
 
@@ -66,7 +67,8 @@ protected:
     virtual drogon::Task<Items> list(const Request& request, CrudPage page) const {
         typename Service::Filters filters;
         for (const auto& [name, value] : request.parameters()) {
-            if (name != "page" && name != "per_page") Policy::add_filter(filters, name, value);
+            if (name != "page" && name != "per_page")
+                Policy::add_filter(filters, name, value);
         }
         return service_->list(page, std::move(filters));
     }
@@ -87,7 +89,7 @@ protected:
         return service_->remove(std::move(id));
     }
 
-private:
+  private:
     static ApiPagination pagination(const Request& request) {
         ApiPagination page{1, 20, false};
         const auto& params = request.parameters();
@@ -106,7 +108,8 @@ private:
 
     static const Json::Value& object_body(const Request& request) {
         const auto& body = request.getJsonObject();
-        if (!body || !body->isObject()) throw CrudValidationError("Expected a JSON object.");
+        if (!body || !body->isObject())
+            throw CrudValidationError("Expected a JSON object.");
         return *body;
     }
 
@@ -115,10 +118,12 @@ private:
             return Policy::parse_id(value);
         } else if constexpr (std::integral<Id>) {
             auto id = parse_crud_integer<Id>(value);
-            if (id <= 0) throw CrudValidationError("Invalid resource ID.");
+            if (id <= 0)
+                throw CrudValidationError("Invalid resource ID.");
             return id;
         } else {
-            if (value.empty()) throw CrudValidationError("Invalid resource ID.");
+            if (value.empty())
+                throw CrudValidationError("Invalid resource ID.");
             return Id(value);
         }
     }
@@ -127,8 +132,10 @@ private:
         using namespace drogon;
         std::string allow;
         const auto append = [&](bool enabled, std::string_view method) {
-            if (!enabled) return;
-            if (!allow.empty()) allow += ", ";
+            if (!enabled)
+                return;
+            if (!allow.empty())
+                allow += ", ";
             allow += method;
         };
         append(item ? methods_.get : methods_.list, "GET");
@@ -144,7 +151,7 @@ private:
     }
 
     drogon::Task<drogon::HttpResponsePtr> dispatch(drogon::HttpRequestPtr request,
-                                                    std::optional<std::string> id = {}) const {
+                                                   std::optional<std::string> id = {}) const {
         using namespace drogon;
         try {
             const auto method = request->method();
@@ -154,20 +161,25 @@ private:
                     auto items = co_await list(*request, {page.per_page + 1, (page.page - 1) * page.per_page});
                     const auto limit = static_cast<std::size_t>(page.per_page);
                     page.has_more = items.size() > limit;
-                    if (page.has_more) items.erase(items.begin() + limit, items.end());
+                    if (page.has_more)
+                        items.erase(items.begin() + limit, items.end());
                     co_return api_ok(*request, std::move(items), page);
                 }
-                if (method == Post && methods_.create) co_return api_ok(*request, co_await create(*request), k201Created);
+                if (method == Post && methods_.create)
+                    co_return api_ok(*request, co_await create(*request), k201Created);
                 co_return method_not_allowed(*request, false);
             }
             if (method == Get && methods_.get) {
                 auto item = co_await get(*request, parse_id(*id));
-                if (item) co_return api_ok(*request, std::move(*item));
+                if (item)
+                    co_return api_ok(*request, std::move(*item));
             } else if (method == Patch && methods_.patch) {
                 auto item = co_await patch(*request, parse_id(*id));
-                if (item) co_return api_ok(*request, std::move(*item));
+                if (item)
+                    co_return api_ok(*request, std::move(*item));
             } else if (method == Delete && methods_.remove) {
-                if (co_await remove(*request, parse_id(*id))) co_return api_ok(*request);
+                if (co_await remove(*request, parse_id(*id)))
+                    co_return api_ok(*request);
             } else {
                 co_return method_not_allowed(*request, true);
             }

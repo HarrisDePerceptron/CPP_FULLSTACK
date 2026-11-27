@@ -25,7 +25,8 @@ constexpr DaoDateTime parse_dao_date_time(std::string_view text) {
         unsigned value{};
         for (std::size_t i = 0; i < size; ++i) {
             const auto digit = text[offset + i];
-            if (digit < '0' || digit > '9') throw std::runtime_error(invalid);
+            if (digit < '0' || digit > '9')
+                throw std::runtime_error(invalid);
             value = value * 10 + static_cast<unsigned>(digit - '0');
         }
         return value;
@@ -34,7 +35,8 @@ constexpr DaoDateTime parse_dao_date_time(std::string_view text) {
     const auto hour = number(11, 2);
     const auto minute = number(14, 2);
     const auto second = number(17, 2);
-    if (!date.ok() || hour >= 24 || minute >= 60 || second >= 60) throw std::runtime_error(invalid);
+    if (!date.ok() || hour >= 24 || minute >= 60 || second >= 60)
+        throw std::runtime_error(invalid);
     return sys_days{date} + hours{hour} + minutes{minute} + seconds{second} + milliseconds{number(20, 3)};
 }
 

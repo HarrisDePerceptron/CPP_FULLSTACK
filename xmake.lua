@@ -2,6 +2,7 @@ set_project("app_template")
 set_languages("cxx26")
 add_rules("mode.debug", "mode.release")
 set_policy("package.requires_lock", true)
+set_policy("run.autobuild", true)
 
 if is_host("macosx") then
 	-- Autoconf cannot use the older m4 shipped with macOS.
@@ -19,6 +20,36 @@ set_showmenu(true)
 set_description("C++ namespace for the application")
 option_end()
 
+target("format_cpp")
+set_kind("phony")
+set_default(false)
+set_policy("build.fence", true)
+on_build(function()
+	import("lib.detect.find_tool")
+
+	local tool = find_tool("clang-format")
+	local formatter = tool and tool.program
+	if not formatter and is_host("macosx") then
+		formatter = try {
+			function()
+				local output = os.iorunv("xcrun", {"--find", "clang-format"})
+				return output:trim()
+			end
+		}
+	end
+	assert(formatter, "Install clang-format and add it to PATH, or select an Xcode toolchain that includes it.")
+
+	local root = os.projectdir()
+	local args = {"-i", "--style=file"}
+	for _, directory in ipairs({"src", "tests"}) do
+		table.join2(args, os.files(path.join(root, directory, "**.h")))
+		table.join2(args, os.files(path.join(root, directory, "**.cpp")))
+	end
+	cprint("${color.build.target}Formatting C++ files")
+	os.vrunv(formatter, args)
+end)
+target_end()
+
 target("template_core")
 on_config(function(target)
 	local name = get_config("app_namespace")
@@ -32,6 +63,7 @@ on_config(function(target)
 	)
 end)
 set_kind("static")
+add_deps("format_cpp")
 add_options("app_namespace")
 add_defines("APP_NAMESPACE=$(app_namespace)", { public = true })
 add_files("src/framework/**.cpp")
@@ -42,6 +74,7 @@ target("app_core")
 set_kind("static")
 add_files("src/app/**.cpp")
 add_deps("template_core", { public = true })
+add_deps("format_cpp")
 add_packages("simdjson", { public = true })
 
 rule("drogon.view")
@@ -69,13 +102,13 @@ add_files("src/main.cpp")
 add_rules("drogon.view")
 add_packages("drogon")
 add_files("views/*.csp")
-add_deps("app_core")
+add_deps("app_core", "format_cpp")
 set_rundir("$(projectdir)")
 
 target("app_tests")
 set_kind("binary")
 set_default(false)
 add_files("tests/*.cpp")
-add_deps("app_core")
+add_deps("app_core", "format_cpp")
 add_packages("catch2", { components = { "main", "lib" } })
 add_tests("suite", { run_timeout = 30000 })

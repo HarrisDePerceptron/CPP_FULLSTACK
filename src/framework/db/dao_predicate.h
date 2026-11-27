@@ -20,7 +20,13 @@ struct DaoMember<Value Owner::*> {
     using Type = typename FieldTraits<std::remove_cv_t<Value>>::Value;
 };
 
-enum class PredicateOp { eq, gt, gte, lt, lte, in, contains };
+enum class PredicateOp { eq,
+                         gt,
+                         gte,
+                         lt,
+                         lte,
+                         in,
+                         contains };
 
 template <PredicateOp op, typename T>
 struct FilterOperand {
@@ -68,25 +74,31 @@ constexpr bool valid_operand() {
         return std::constructible_from<Value, T>;
     } else {
         return (std::signed_integral<Scalar> || std::same_as<Scalar, double> ||
-                std::same_as<Scalar, DaoDateTime>) && std::constructible_from<Scalar, T>;
+                std::same_as<Scalar, DaoDateTime>) &&
+               std::constructible_from<Scalar, T>;
     }
 }
 
 }
 
-template <typename T> auto eq(T&& value) { return detail::operand<detail::PredicateOp::eq>(std::forward<T>(value)); }
-template <typename T> auto gt(T&& value) { return detail::operand<detail::PredicateOp::gt>(std::forward<T>(value)); }
-template <typename T> auto gte(T&& value) { return detail::operand<detail::PredicateOp::gte>(std::forward<T>(value)); }
-template <typename T> auto lt(T&& value) { return detail::operand<detail::PredicateOp::lt>(std::forward<T>(value)); }
-template <typename T> auto lte(T&& value) { return detail::operand<detail::PredicateOp::lte>(std::forward<T>(value)); }
+template <typename T>
+auto eq(T&& value) { return detail::operand<detail::PredicateOp::eq>(std::forward<T>(value)); }
+template <typename T>
+auto gt(T&& value) { return detail::operand<detail::PredicateOp::gt>(std::forward<T>(value)); }
+template <typename T>
+auto gte(T&& value) { return detail::operand<detail::PredicateOp::gte>(std::forward<T>(value)); }
+template <typename T>
+auto lt(T&& value) { return detail::operand<detail::PredicateOp::lt>(std::forward<T>(value)); }
+template <typename T>
+auto lte(T&& value) { return detail::operand<detail::PredicateOp::lte>(std::forward<T>(value)); }
 
 template <auto first_member, auto second_member, typename FirstValue, typename SecondValue>
     requires std::is_member_object_pointer_v<decltype(first_member)> &&
              std::is_member_object_pointer_v<decltype(second_member)> &&
              (detail::valid_operand<typename detail::DaoMember<decltype(first_member)>::Type,
-                                  detail::PredicateOp::lt, FirstValue>()) &&
+                                    detail::PredicateOp::lt, FirstValue>()) &&
              (detail::valid_operand<typename detail::DaoMember<decltype(second_member)>::Type,
-                                  detail::PredicateOp::lt, SecondValue>())
+                                    detail::PredicateOp::lt, SecondValue>())
 auto where_tuple_less(FirstValue&& first, SecondValue&& second) {
     using Predicate = detail::DaoTupleLess<first_member, second_member>;
     return Predicate{typename Predicate::FirstValue(std::forward<FirstValue>(first)),
@@ -121,7 +133,8 @@ auto where(detail::FilterOperand<op, T> operand) {
     using Value = typename Predicate::Value;
     Predicate predicate{op, {}};
     if constexpr (op == detail::PredicateOp::in) {
-        for (const auto& value : operand.value) predicate.values.emplace_back(value);
+        for (const auto& value : operand.value)
+            predicate.values.emplace_back(value);
     } else if constexpr (op == detail::PredicateOp::eq || op == detail::PredicateOp::contains) {
         predicate.values.emplace_back(std::move(operand.value));
     } else {

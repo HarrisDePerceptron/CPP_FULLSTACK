@@ -19,7 +19,7 @@ namespace APP_NAMESPACE {
 class DatabaseBackend;
 
 class DaoTransaction {
-public:
+  public:
     virtual ~DaoTransaction() = default;
     DaoTransaction(const DaoTransaction&) = delete;
     DaoTransaction& operator=(const DaoTransaction&) = delete;
@@ -27,7 +27,7 @@ public:
     virtual const DatabaseBackend& backend() const = 0;
     virtual const drogon::orm::DbClientPtr& client() const = 0;
 
-protected:
+  protected:
     DaoTransaction() = default;
 };
 
@@ -38,7 +38,7 @@ using BatchCallback = std::function<drogon::Task<>(const DaoTransaction&)>;
 using CompositeUniqueness = std::vector<std::vector<std::string>>;
 
 class DatabaseBackend {
-public:
+  public:
     virtual ~DatabaseBackend() = default;
     virtual const drogon::orm::DbClientPtr& client() const = 0;
     virtual std::string_view current_timestamp_sql() const = 0;
@@ -72,8 +72,10 @@ drogon::Task<drogon::orm::Result> await_query(Awaiter query) {
     } catch (...) {
         error = std::current_exception();
     }
-    if (caller && !caller->isInLoopThread()) co_await drogon::switchThreadCoro(caller);
-    if (error) std::rethrow_exception(error);
+    if (caller && !caller->isInLoopThread())
+        co_await drogon::switchThreadCoro(caller);
+    if (error)
+        std::rethrow_exception(error);
     co_return std::move(*result);
 }
 

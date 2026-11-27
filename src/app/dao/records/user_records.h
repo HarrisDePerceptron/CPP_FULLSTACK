@@ -4,6 +4,7 @@
 
 #include "framework/db/dao_record.h"
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -19,5 +20,10 @@ struct UserFields {
 };
 
 using UserRecord = DaoRecord<UserFields>;
+
+struct UserMatch {
+    std::int64_t id;
+    std::string username;
+};
 
 }

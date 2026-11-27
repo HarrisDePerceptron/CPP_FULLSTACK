@@ -13,8 +13,7 @@ namespace APP_NAMESPACE {
 namespace detail {
 
 template <typename Fields, std::size_t index>
-using DaoFieldTraits = FieldTraits<std::remove_cvref_t<decltype(
-    glz::get<index>(glz::to_tie(std::declval<Fields&>())))>>;
+using DaoFieldTraits = FieldTraits<std::remove_cvref_t<decltype(glz::get<index>(glz::to_tie(std::declval<Fields&>())))>>;
 
 template <typename Fields, std::size_t index>
 constexpr auto primary_type() {
@@ -56,15 +55,14 @@ struct DaoGeneratedKey<Fields, true> {
 }
 
 template <glz::reflectable Fields>
-struct DaoRecord : Fields, detail::DaoTimestamps<Fields>, detail::DaoDeletion,
-                   detail::DaoGeneratedKey<Fields, std::tuple_size_v<detail::PrimaryTypes<Fields>> == 0> {
+struct DaoRecord : Fields, detail::DaoTimestamps<Fields>, detail::DaoDeletion, detail::DaoGeneratedKey<Fields, std::tuple_size_v<detail::PrimaryTypes<Fields>> == 0> {
     using FieldRecord = Fields;
     using Keys = detail::PrimaryTypes<Fields>;
     static_assert(std::tuple_size_v<Keys> <= 1, "only one primary field is supported");
     static constexpr bool generated_id = std::tuple_size_v<Keys> == 0;
 
     using Id = typename std::tuple_element_t<0, decltype(std::tuple_cat(
-        Keys{}, std::tuple{std::type_identity<std::int64_t>{}}))>::type;
+                                                    Keys{}, std::tuple{std::type_identity<std::int64_t>{}}))>::type;
 
     static constexpr std::string_view key_column = []<std::size_t... index>(std::index_sequence<index...>) {
         std::string_view key = "id";
@@ -89,7 +87,7 @@ struct DaoRecord : Fields, detail::DaoTimestamps<Fields>, detail::DaoDeletion,
         return is_column_loaded(glz::get_name<member>());
     }
 
-private:
+  private:
     std::vector<std::string> omitted_;
 };
 

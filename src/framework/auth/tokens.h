@@ -13,7 +13,7 @@ namespace APP_NAMESPACE {
 std::string load_signing_key();
 
 class Tokens {
-public:
+  public:
     Tokens(std::string key, std::chrono::seconds lifetime)
         : key_(std::move(key)), lifetime_(lifetime) {}
 
@@ -21,7 +21,7 @@ public:
     std::optional<std::string> verify(std::string_view token) const;
     std::chrono::seconds lifetime() const { return lifetime_; }
 
-private:
+  private:
     std::string key_;
     std::chrono::seconds lifetime_;
 };

@@ -24,7 +24,8 @@ namespace config_detail {
 inline std::string_view trim(std::string_view value) {
     constexpr std::string_view whitespace = " \t\r\n";
     const auto first = value.find_first_not_of(whitespace);
-    if (first == std::string_view::npos) return {};
+    if (first == std::string_view::npos)
+        return {};
     return value.substr(first, value.find_last_not_of(whitespace) - first + 1);
 }
 
@@ -37,7 +38,8 @@ inline bool valid_environment_name(std::string_view name) {
 
 inline std::string read_json_file(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
-    if (!input) throw std::runtime_error("could not open " + path.string());
+    if (!input)
+        throw std::runtime_error("could not open " + path.string());
     return {std::istreambuf_iterator<char>(input), {}};
 }
 
@@ -53,13 +55,14 @@ inline std::string environment_name(std::string_view key) {
     return name;
 }
 
-template<class T>
+template <class T>
 void apply_environment(T& config) {
     std::size_t index = 0;
     glz::for_each_field(config, [&index](auto& field) {
         const auto name = environment_name(glz::reflect<T>::keys[index++]);
         const auto* configured = std::getenv(name.c_str());
-        if (!configured) return;
+        if (!configured)
+            return;
 
         using Field = std::remove_cvref_t<decltype(field)>;
         if constexpr (std::same_as<Field, std::string> ||
@@ -79,16 +82,19 @@ void apply_environment(T& config) {
 }
 
 inline void load_environment(const std::filesystem::path& env_path) {
-    if (!std::filesystem::exists(env_path)) return;
+    if (!std::filesystem::exists(env_path))
+        return;
     std::ifstream input(env_path);
-    if (!input) throw std::runtime_error("could not open .env");
+    if (!input)
+        throw std::runtime_error("could not open .env");
 
     std::size_t line_number = 0;
     std::string line;
     while (std::getline(input, line)) {
         ++line_number;
         const auto assignment = config_detail::trim(line);
-        if (assignment.empty() || assignment.starts_with('#')) continue;
+        if (assignment.empty() || assignment.starts_with('#'))
+            continue;
 
         const auto equal = assignment.find('=');
         const auto name = config_detail::trim(assignment.substr(0, equal));
@@ -109,10 +115,11 @@ inline void load_environment(const std::filesystem::path& env_path) {
             throw std::runtime_error("could not load .env assignment on line " + std::to_string(line_number));
         }
     }
-    if (input.bad()) throw std::runtime_error("could not read .env");
+    if (input.bad())
+        throw std::runtime_error("could not read .env");
 }
 
-template<glz::reflectable T>
+template <glz::reflectable T>
 T read_config(const std::filesystem::path& path) {
     const auto json = config_detail::read_json_file(path);
     T config{};
@@ -127,7 +134,7 @@ T read_config(const std::filesystem::path& path) {
     return config;
 }
 
-template<glz::reflectable T>
+template <glz::reflectable T>
 T load_config(const std::filesystem::path& root) {
     load_environment(root / ".env");
     return read_config<T>(root / "config.json");

@@ -22,7 +22,8 @@ T read_scalar(const drogon::orm::Field& field) {
     if constexpr (std::is_scoped_enum_v<T>) {
         const auto label = field.as<std::string>();
         const auto value = magic_enum::enum_cast<T>(label);
-        if (!value) throw std::runtime_error("unknown DAO enum label: " + label);
+        if (!value)
+            throw std::runtime_error("unknown DAO enum label: " + label);
         return *value;
     } else if constexpr (std::same_as<T, DaoDateTime>) {
         return parse_dao_date_time(field.as<std::string>());
@@ -61,8 +62,10 @@ T row_to_struct(const drogon::orm::Row& row, std::span<const std::string> omitte
         using Traits = detail::FieldTraits<std::remove_cvref_t<decltype(field)>>;
         if constexpr (detail::Nullable<typename Traits::Value>::nullable) {
             if (std::ranges::find(omitted, name) != omitted.end()) {
-                if constexpr (Traits::foreign_key().has_value()) Traits::set_key(field, std::nullopt);
-                else Traits::unwrap(field).reset();
+                if constexpr (Traits::foreign_key().has_value())
+                    Traits::set_key(field, std::nullopt);
+                else
+                    Traits::unwrap(field).reset();
                 return;
             }
         }

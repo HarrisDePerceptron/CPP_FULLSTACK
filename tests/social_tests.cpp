@@ -31,7 +31,7 @@ struct SocialFixture {
         auto comments = co_await SocialCommentDao::init(database);
         auto likes = co_await SocialLikeDao::init(database);
         co_return SocialFixture{UserService(std::move(users)),
-            SocialService(std::move(posts), std::move(comments), std::move(likes))};
+                                SocialService(std::move(posts), std::move(comments), std::move(likes))};
     }
 
     drogon::Task<UserRecord::Id> account(std::string name) {

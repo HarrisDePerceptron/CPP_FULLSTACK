@@ -5,7 +5,7 @@
 - `src/main.cpp` calls the inline `serve()` entry point in `src/app/server/server.h`. Keep startup and service wiring in that directory and HTTP handlers in its `routes/` subdirectory. Register access logging and exception handling as separate framework hooks.
 - Mount feature route modules from `src/app/server/routes.cpp` and pass the Drogon server explicitly. Keep each path, HTTP method, and middleware constraint visible in the feature's `registerHandler()` calls. Give each method its own registration.
 - Define app settings, defaults, and field validation in `src/app/config.h`. Use public members on a plain config struct and call `load_config<Config>(root)` at startup. Use the framework's `ServerConfig` for shared server settings and defaults. The member names supply the JSON keys and environment variable names. See the [README configuration example](README.md#configuration).
-- Keep business rules, transaction orchestration, and upstream clients in `src/app/services/`. Keep domain DAOs and SQL in `src/app/dao/`. Put persisted records and DTOs in separate model headers under `src/app/models/`.
+- Keep business rules, transaction orchestration, upstream clients, and service types in `src/app/services/`. Keep domain DAOs and SQL in `src/app/dao/`, and put persisted entities and their query result types together in the entity headers under `src/app/dao/records/`. Define HTTP-only payloads in `src/app/server/dto/`.
 - `src/framework/` holds reusable database, CRUD, HTTP, JWT, storage, and support code. The `template_core` target builds this layer independently. Framework code must not include app headers.
 - Include `framework/db/base_dao.h` to define a DAO. Its implementation headers are private to the framework.
 - Keep each C++ header beside its implementation and use paths relative to `src/` when including headers from another directory.
@@ -19,6 +19,7 @@ Run commands from the project root with Xmake and a C++26 compiler and standard 
 - `xmake f -m debug` or `xmake f -m release` selects the build mode.
 - Set a custom C++ namespace with `xmake f --app_namespace=MyApp`. The default is `App`.
 - `xmake` resolves dependencies and builds the server. First-time dependency resolution requires network access or a populated Xmake cache.
+- Builds format C++ files in `src/` and `tests/` before compiling, including the automatic build in `xmake run app_server`. Install `clang-format` on `PATH` or use Xcode's formatter on macOS. Run `xmake build format_cpp` for a format-only pass.
 - `xmake build template_core` builds the shared library by itself.
 - `xmake run app_server` starts the server at `http://127.0.0.1:8080` with the default `config.json`. The shipped config sets the local demo credentials with `test_user` and `test_password`. When both are omitted, the server generates demo credentials on first launch and prints them. Startup applies configured credentials to the demo account in `.local/`. Use the shipped credentials only for local testing.
 - After editing the page or Tailwind source, run `npm ci` and `npm run build:css`. Commit the regenerated `public/demo.css`.
@@ -29,7 +30,7 @@ Config fields resolve from the process environment, then `.env`, then `config.js
 
 ## Coding Style
 
-Use four spaces and place opening braces on the declaration line. Use `.h` for C++ headers and `.cpp` for implementations. Keep route handlers small and delegate persistence and outbound calls to their modules. Always use `co_await` for asynchronous application code and `std::println` for console output, including logs. Use `api_ok` and `api_error` for typed API responses.
+Use the root `.clang-format` for C++ formatting. Use four spaces and place opening braces on the declaration line. Use `.h` for C++ headers and `.cpp` for implementations. Keep route handlers small and delegate persistence and outbound calls to their modules. Always use `co_await` for asynchronous application code and `std::println` for console output, including logs. Use `api_ok` and `api_error` for typed API responses.
 
 Use `snake_case` for project-owned C++ functions, methods, variables, fields, constants, and enum values. Use `PascalCase` for project-owned types. Keep existing macro spellings and use third-party identifiers as declared, including Drogon methods such as `registerHandler()`. Preserve existing JSON keys, configuration keys, and stored database names when renaming C++ identifiers.
 

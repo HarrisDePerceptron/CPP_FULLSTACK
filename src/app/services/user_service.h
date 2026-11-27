@@ -1,7 +1,6 @@
 #pragma once
 
 #include "app/dao/user_dao.h"
-#include "app/models/account_models.h"
 #include "framework/support/workers.h"
 
 #include <optional>
@@ -10,8 +9,13 @@
 
 namespace APP_NAMESPACE {
 
+struct Credentials {
+    std::string username;
+    std::string password;
+};
+
 class UserService {
-public:
+  public:
     explicit UserService(UserDao dao) : dao_(std::move(dao)) {}
 
     drogon::Task<std::optional<Credentials>> seed_demo() const;
@@ -22,7 +26,7 @@ public:
     drogon::Task<bool> signup(Credentials credentials, Workers& workers) const;
     drogon::Task<bool> authenticate(std::string username, std::string password, Workers& workers) const;
 
-private:
+  private:
     UserDao dao_;
 };
 

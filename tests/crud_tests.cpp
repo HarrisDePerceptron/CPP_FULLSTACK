@@ -26,11 +26,12 @@ struct WidgetFields {
 using WidgetRecord = DaoRecord<WidgetFields>;
 
 class WidgetDao final : public BaseDao<WidgetDao, WidgetRecord> {
-public:
+  public:
     static drogon::Task<WidgetDao> init(DatabaseBackendPtr database) {
         return finish_initialization(WidgetDao(std::move(database)));
     }
-private:
+
+  private:
     explicit WidgetDao(DatabaseBackendPtr database) : BaseDao(std::move(database)) {}
 };
 
@@ -41,7 +42,10 @@ struct Widgets {
         std::string group;
         std::optional<std::string> note;
     };
-    struct Create { std::string name, group; std::optional<std::string> note; };
+    struct Create {
+        std::string name, group;
+        std::optional<std::string> note;
+    };
     struct Patch {
         std::optional<std::string> name;
         std::optional<std::optional<std::string>> note;
@@ -52,12 +56,14 @@ struct Widgets {
     }
 
     static std::string required_text(const Json::Value& value) {
-        if (!value.isString() || value.asString().empty()) throw CrudValidationError("Expected nonempty text.");
+        if (!value.isString() || value.asString().empty())
+            throw CrudValidationError("Expected nonempty text.");
         return value.asString();
     }
 
     static std::optional<std::string> nullable_text(const Json::Value& value) {
-        if (value.isNull()) return std::nullopt;
+        if (value.isNull())
+            return std::nullopt;
         return required_text(value);
     }
 
@@ -73,9 +79,12 @@ struct Widgets {
     static Patch parse_patch(const Json::Value& body) {
         Patch patch;
         for (const auto& name : body.getMemberNames()) {
-            if (name == "name") patch.name = required_text(body[name]);
-            else if (name == "note") patch.note.emplace(nullable_text(body[name]));
-            else throw CrudValidationError("Unknown patch field.");
+            if (name == "name")
+                patch.name = required_text(body[name]);
+            else if (name == "note")
+                patch.note.emplace(nullable_text(body[name]));
+            else
+                throw CrudValidationError("Unknown patch field.");
         }
         return patch;
     }
@@ -85,51 +94,61 @@ struct Widgets {
     }
 
     static void apply_patch(WidgetRecord& row, Patch input) {
-        if (input.name) row.name.value = std::move(*input.name);
-        if (input.note) row.note = std::move(*input.note);
+        if (input.name)
+            row.name.value = std::move(*input.name);
+        if (input.note)
+            row.note = std::move(*input.note);
     }
 
     static void add_filter(WidgetDao::EqualityFilters& filters, std::string_view name, std::string value) {
-        if (name == "name") filters.equal<&WidgetFields::name>(std::move(value));
-        else if (name == "group") filters.equal<&WidgetFields::group>(std::move(value));
-        else throw CrudValidationError("Unknown filter.");
+        if (name == "name")
+            filters.equal<&WidgetFields::name>(std::move(value));
+        else if (name == "group")
+            filters.equal<&WidgetFields::group>(std::move(value));
+        else
+            throw CrudValidationError("Unknown filter.");
     }
 };
 
 class WidgetService final : public CrudService<WidgetDao, Widgets> {
-public:
+  public:
     using CrudService::CrudService;
 
     drogon::Task<std::optional<Response>> get(Id id) const override {
         auto item = co_await CrudService::get(id);
-        if (item) item->group += "-service";
+        if (item)
+            item->group += "-service";
         co_return item;
     }
 };
 
 class WidgetRouter final : public CrudRouter<WidgetService> {
-public:
+  public:
     using CrudRouter::CrudRouter;
 
-protected:
+  protected:
     drogon::Task<std::optional<Response>> get(const Request& request, Id id) const override {
         auto item = co_await CrudRouter::get(request, id);
-        if (item) item->group += "-router";
+        if (item)
+            item->group += "-router";
         co_return item;
     }
 };
 
 unsigned short free_port() {
     const auto socket_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (socket_fd < 0) throw std::runtime_error("Could not allocate fixture socket");
+    if (socket_fd < 0)
+        throw std::runtime_error("Could not allocate fixture socket");
     sockaddr_in address{};
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     socklen_t size = sizeof(address);
     const auto status = bind(socket_fd, reinterpret_cast<sockaddr*>(&address), size) == 0
-        ? getsockname(socket_fd, reinterpret_cast<sockaddr*>(&address), &size) : -1;
+                            ? getsockname(socket_fd, reinterpret_cast<sockaddr*>(&address), &size)
+                            : -1;
     close(socket_fd);
-    if (status != 0) throw std::runtime_error("Could not reserve fixture port");
+    if (status != 0)
+        throw std::runtime_error("Could not reserve fixture port");
     return ntohs(address.sin_port);
 }
 
@@ -165,7 +184,7 @@ Json::Value check_reply(const drogon::HttpResponsePtr& response, int status,
 }
 
 class CrudServer {
-public:
+  public:
     CrudServer() : port_(free_port()) {
         auto ready = std::make_shared<std::promise<void>>();
         auto startup = ready->get_future();
@@ -174,22 +193,21 @@ public:
                 auto& server = drogon::app();
                 server.addListener("127.0.0.1", port_).setThreadNum(1);
                 register_exception_handler(server, Logger(LogLevel::error));
-                server.registerHandler("/exceptions/busy", [](drogon::HttpRequestPtr)
-                    -> drogon::Task<drogon::HttpResponsePtr> {
+                server.registerHandler("/exceptions/busy", [](drogon::HttpRequestPtr) -> drogon::Task<drogon::HttpResponsePtr> {
                     throw WorkersBusy{};
                     co_return nullptr;
-                }, {drogon::Get});
-                server.registerHandler("/exceptions/unexpected", [](drogon::HttpRequestPtr)
-                    -> drogon::Task<drogon::HttpResponsePtr> {
+                },
+                                       {drogon::Get});
+                server.registerHandler("/exceptions/unexpected", [](drogon::HttpRequestPtr) -> drogon::Task<drogon::HttpResponsePtr> {
                     throw std::runtime_error("private fixture failure");
                     co_return nullptr;
-                }, {drogon::Get});
+                },
+                                       {drogon::Get});
                 for (const std::string prefix : {"/success", "/errors", "/edges"}) {
                     auto database = drogon::sync_wait(open_sqlite_database(":memory:"));
                     auto service = std::make_shared<WidgetService>(drogon::sync_wait(WidgetDao::init(database)));
                     WidgetRouter::mount(server, prefix + "/widgets", std::make_shared<WidgetRouter>(service));
-                    WidgetRouter::mount(server, prefix + "/readonly", std::make_shared<WidgetRouter>(
-                        service, CrudMethods{.create = false, .patch = false, .remove = false}));
+                    WidgetRouter::mount(server, prefix + "/readonly", std::make_shared<WidgetRouter>(service, CrudMethods{.create = false, .patch = false, .remove = false}));
                 }
                 server.registerBeginningAdvice([ready] { ready->set_value(); });
                 server.run();
@@ -207,13 +225,13 @@ public:
 
     std::string base_url() const { return "http://127.0.0.1:" + std::to_string(port_); }
 
-private:
+  private:
     unsigned short port_;
     std::future<void> server_;
 };
 
 class CrudClient {
-public:
+  public:
     explicit CrudClient(std::string prefix)
         : prefix_(std::move(prefix)), client_(drogon::HttpClient::newHttpClient(server().base_url())) {}
 
@@ -233,7 +251,7 @@ public:
         return send(drogon::Delete, path);
     }
 
-private:
+  private:
     drogon::HttpResponsePtr send(drogon::HttpMethod method, const std::string& path,
                                  const std::string& body = {}) const {
         const auto request = drogon::HttpRequest::newHttpRequest();
@@ -260,7 +278,8 @@ private:
 
 std::string create_widget(const CrudClient& client) {
     const auto created = check_reply(client.post("/widgets",
-        R"({"name":"alpha","group":"one","note":"keep"})"), 201);
+                                                 R"({"name":"alpha","group":"one","note":"keep"})"),
+                                     201);
     REQUIRE(created.size() == 1);
     CHECK_FALSE(created[0].isMember("private_value"));
     return "/widgets/" + std::to_string(created[0]["id"].asInt64());

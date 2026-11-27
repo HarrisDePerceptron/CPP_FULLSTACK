@@ -8,11 +8,6 @@
 
 namespace APP_NAMESPACE {
 
-struct Credentials {
-    std::string username;
-    std::string password;
-};
-
 struct LoginResult {
     std::string access_token;
     std::string_view token_type;
@@ -20,11 +15,6 @@ struct LoginResult {
 };
 
 struct Identity {
-    std::string username;
-};
-
-struct UserMatch {
-    std::int64_t id;
     std::string username;
 };
 

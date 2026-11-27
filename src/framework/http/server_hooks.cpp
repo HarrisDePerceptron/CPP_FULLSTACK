@@ -20,8 +20,7 @@ void register_access_logging(drogon::HttpAppFramework& server, LogLevel level, L
     using Clock = std::chrono::steady_clock;
     constexpr auto start_attribute = "app.requestStart";
     constexpr trantor::Logger::LogLevel levels[]{
-        trantor::Logger::kInfo, trantor::Logger::kWarn, trantor::Logger::kError
-    };
+        trantor::Logger::kInfo, trantor::Logger::kWarn, trantor::Logger::kError};
     server.setLogLevel(levels[static_cast<int>(level)]);
     server.registerPreRoutingAdvice([start_attribute](const HttpRequestPtr& request) {
         request->attributes()->insert(start_attribute, Clock::now());
@@ -33,12 +32,14 @@ void register_access_logging(drogon::HttpAppFramework& server, LogLevel level, L
         [log, start_attribute, static_url_prefix = std::move(static_url_prefix),
          static_route = std::move(static_route)](const HttpRequestPtr& request, const HttpResponsePtr& response) {
             const auto start = request->attributes()->get<Clock::time_point>(start_attribute);
-            if (start == Clock::time_point{}) return;
+            if (start == Clock::time_point{})
+                return;
             const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - start);
             auto route = request->matchedPathPattern();
             if (route.empty()) {
                 route = request->path().starts_with(static_url_prefix)
-                    ? std::string_view(static_route) : "(unmatched)";
+                            ? std::string_view(static_route)
+                            : "(unmatched)";
             }
             log.write(LogLevel::info, "{} {} {} {} {}ms", api_request_id(*request), request->methodString(),
                       route, static_cast<int>(response->statusCode()), elapsed.count());

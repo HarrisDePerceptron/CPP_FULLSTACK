@@ -6,12 +6,12 @@
 #include <print>
 
 int main() {
-  try {
+    try {
 
-    return APP_NAMESPACE::serve(std::filesystem::current_path());
+        return APP_NAMESPACE::serve(std::filesystem::current_path());
 
-  } catch (const std::exception &error) {
-    std::println(stderr, "Startup failed: {}", error.what());
-    return 1;
-  }
+    } catch (const std::exception& error) {
+        std::println(stderr, "Startup failed: {}", error.what());
+        return 1;
+    }
 }

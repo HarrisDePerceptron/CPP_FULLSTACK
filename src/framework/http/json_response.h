@@ -54,7 +54,8 @@ inline ApiMeta api_meta(const drogon::HttpRequest& request, std::optional<ApiPag
     const auto now = std::time(nullptr);
     std::tm utc{};
     char timestamp[21]{};
-    if (gmtime_r(&now, &utc)) std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", &utc);
+    if (gmtime_r(&now, &utc))
+        std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", &utc);
     return {timestamp, api_request_id(request), pagination};
 }
 
@@ -79,13 +80,13 @@ drogon::HttpResponsePtr serialize_api(const ApiResponse<T>& payload, drogon::Htt
 
 template <typename T>
 drogon::HttpResponsePtr api_ok(const drogon::HttpRequest& request, std::vector<T> items,
-                            ApiPagination pagination, drogon::HttpStatusCode status = drogon::k200OK) {
+                               ApiPagination pagination, drogon::HttpStatusCode status = drogon::k200OK) {
     return serialize_api(ApiResponse<T>{true, std::move(items), {}, api_meta(request, pagination)}, status);
 }
 
 template <typename T>
 drogon::HttpResponsePtr api_ok(const drogon::HttpRequest& request, T item,
-                            drogon::HttpStatusCode status = drogon::k200OK) {
+                               drogon::HttpStatusCode status = drogon::k200OK) {
     std::vector<T> items;
     items.push_back(std::move(item));
     return api_ok(request, std::move(items), {}, status);
@@ -96,9 +97,10 @@ inline drogon::HttpResponsePtr api_ok(const drogon::HttpRequest& request) {
 }
 
 inline drogon::HttpResponsePtr api_error(const drogon::HttpRequest& request, drogon::HttpStatusCode status,
-                                       std::string code, std::string message, ApiErrorFields fields = {}) {
+                                         std::string code, std::string message, ApiErrorFields fields = {}) {
     ApiError error{std::move(code), std::move(message), {}};
-    if (!fields.empty()) error.fields.emplace(std::move(fields));
+    if (!fields.empty())
+        error.fields.emplace(std::move(fields));
     return serialize_api(ApiResponse<bool>{false, {}, std::move(error), api_meta(request, {})}, status);
 }
 

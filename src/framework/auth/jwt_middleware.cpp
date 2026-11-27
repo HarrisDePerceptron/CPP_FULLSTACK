@@ -13,7 +13,7 @@ namespace {
 using namespace drogon;
 
 class JwtMiddleware : public HttpCoroMiddleware<JwtMiddleware, false> {
-public:
+  public:
     explicit JwtMiddleware(std::shared_ptr<const Tokens> tokens)
         : tokens_(std::move(tokens)) {}
 
@@ -39,7 +39,7 @@ public:
         co_return response;
     }
 
-private:
+  private:
     std::shared_ptr<const Tokens> tokens_;
 };
 

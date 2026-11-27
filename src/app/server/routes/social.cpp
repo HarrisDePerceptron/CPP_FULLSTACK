@@ -1,4 +1,4 @@
-#include "app/models/social_models.h"
+#include "app/server/dto/social_dtos.h"
 #include "app/server/routes.h"
 #include "framework/auth/jwt_middleware.h"
 #include "framework/http/json_response.h"
@@ -46,9 +46,10 @@ std::string read_text(const HttpRequest& request) {
 
 template <typename Item>
 HttpResponsePtr page_response(const HttpRequest& request, std::vector<Item> items, std::int64_t page,
-                             std::int64_t per_page = SocialService::page_size) {
+                              std::int64_t per_page = SocialService::page_size) {
     const bool has_more = items.size() > static_cast<std::size_t>(per_page);
-    if (has_more) items.pop_back();
+    if (has_more)
+        items.pop_back();
     return api_ok(request, std::move(items), ApiPagination{page, per_page, has_more});
 }
 
@@ -90,32 +91,38 @@ Task<HttpResponsePtr> login_page(const std::string& public_url_prefix) {
 
 Task<HttpResponsePtr> search(std::shared_ptr<Services> services, HttpRequestPtr request) {
     const auto viewer = co_await services->users.find_id(request->attributes()->get<std::string>(subject_attribute));
-    if (!viewer) co_return unauthorized(*request);
+    if (!viewer)
+        co_return unauthorized(*request);
     auto matches = co_await services->social.search(request->getParameter("q"), services->users);
     co_return no_store(api_ok(*request, std::move(matches)));
 }
 
 Task<HttpResponsePtr> view_post(std::shared_ptr<Services> services, HttpRequestPtr request, std::string id) {
     const auto viewer = co_await services->users.find_id(request->attributes()->get<std::string>(subject_attribute));
-    if (!viewer) co_return unauthorized(*request);
+    if (!viewer)
+        co_return unauthorized(*request);
     auto post = co_await services->social.view(*viewer, positive_integer(id));
-    if (!post) co_return missing_post(*request);
+    if (!post)
+        co_return missing_post(*request);
     co_return no_store(api_ok(*request, std::move(*post)));
 }
 
 Task<HttpResponsePtr> list_user_posts(std::shared_ptr<Services> services, HttpRequestPtr request,
                                       std::string id) {
     const auto viewer = co_await services->users.find_id(request->attributes()->get<std::string>(subject_attribute));
-    if (!viewer) co_return unauthorized(*request);
+    if (!viewer)
+        co_return unauthorized(*request);
     const auto page = page_number(*request);
     auto profile = co_await services->social.user_posts(*viewer, positive_integer(id), page, services->users);
-    if (!profile) co_return api_error(*request, k404NotFound, "NOT_FOUND", "That person could not be found.");
+    if (!profile)
+        co_return api_error(*request, k404NotFound, "NOT_FOUND", "That person could not be found.");
     co_return no_store(page_response(*request, std::move(*profile), page));
 }
 
 Task<HttpResponsePtr> list_posts(std::shared_ptr<Services> services, HttpRequestPtr request) {
     const auto user = co_await services->users.find_id(request->attributes()->get<std::string>(subject_attribute));
-    if (!user) co_return unauthorized(*request);
+    if (!user)
+        co_return unauthorized(*request);
     const auto page = page_number(*request);
     auto posts = co_await services->social.feed(*user, page);
     co_return no_store(page_response(*request, std::move(posts), page));
@@ -124,7 +131,8 @@ Task<HttpResponsePtr> list_posts(std::shared_ptr<Services> services, HttpRequest
 Task<HttpResponsePtr> create_post(std::shared_ptr<Services> services, HttpRequestPtr request) {
     const auto username = request->attributes()->get<std::string>(subject_attribute);
     const auto user = co_await services->users.find_id(username);
-    if (!user) co_return unauthorized(*request);
+    if (!user)
+        co_return unauthorized(*request);
     auto post = co_await services->social.post(*user, username, read_text(*request));
     co_return no_store(api_ok(*request, std::move(post), k201Created));
 }
@@ -132,7 +140,8 @@ Task<HttpResponsePtr> create_post(std::shared_ptr<Services> services, HttpReques
 Task<HttpResponsePtr> list_comments(std::shared_ptr<Services> services, HttpRequestPtr request,
                                     std::string id) {
     const auto user = co_await services->users.find_id(request->attributes()->get<std::string>(subject_attribute));
-    if (!user) co_return unauthorized(*request);
+    if (!user)
+        co_return unauthorized(*request);
     const auto post = positive_integer(id);
     const auto& parameters = request->getParameters();
     if (parameters.contains("before_id") || parameters.contains("before_time")) {
@@ -143,12 +152,14 @@ Task<HttpResponsePtr> list_comments(std::shared_ptr<Services> services, HttpRequ
         }
         auto comments = co_await services->social.older_comments(
             post, CommentCursor{time, positive_integer(before_id)}, services->users);
-        if (!comments) co_return missing_post(*request);
+        if (!comments)
+            co_return missing_post(*request);
         co_return no_store(page_response(*request, std::move(*comments), 1, SocialService::comment_batch_size));
     }
     const auto page = page_number(*request);
     auto comments = co_await services->social.thread(post, page, services->users);
-    if (!comments) co_return missing_post(*request);
+    if (!comments)
+        co_return missing_post(*request);
     co_return no_store(page_response(*request, std::move(*comments), page));
 }
 
@@ -156,19 +167,23 @@ Task<HttpResponsePtr> create_comment(std::shared_ptr<Services> services, HttpReq
                                      std::string id) {
     const auto username = request->attributes()->get<std::string>(subject_attribute);
     const auto user = co_await services->users.find_id(username);
-    if (!user) co_return unauthorized(*request);
+    if (!user)
+        co_return unauthorized(*request);
     const auto post = positive_integer(id);
     auto comment = co_await services->social.comment(post, *user, username, read_text(*request));
-    if (!comment) co_return missing_post(*request);
+    if (!comment)
+        co_return missing_post(*request);
     co_return no_store(api_ok(*request, std::move(*comment), k201Created));
 }
 
 Task<HttpResponsePtr> set_like(std::shared_ptr<Services> services, HttpRequestPtr request,
                                std::string id, bool liked) {
     const auto user = co_await services->users.find_id(request->attributes()->get<std::string>(subject_attribute));
-    if (!user) co_return unauthorized(*request);
+    if (!user)
+        co_return unauthorized(*request);
     auto like = co_await services->social.like(positive_integer(id), *user, liked);
-    if (!like) co_return missing_post(*request);
+    if (!like)
+        co_return missing_post(*request);
     co_return no_store(api_ok(*request, *like));
 }
 
@@ -178,38 +193,49 @@ void register_social_routes(drogon::HttpAppFramework& server, const std::shared_
                             const std::string& jwt, const std::string& public_url_prefix) {
     server.registerHandler("/", [services, public_url_prefix](HttpRequestPtr request) {
         return feed_page(services, std::move(request), public_url_prefix);
-    }, {Get});
+    },
+                           {Get});
     server.registerHandler("/social", &redirect_to_feed, {Get});
     server.registerHandler("/social/login", [public_url_prefix](HttpRequestPtr) {
         return login_page(public_url_prefix);
-    }, {Get});
+    },
+                           {Get});
     server.registerHandler("/api/search", [services](HttpRequestPtr request) {
         return search(services, std::move(request));
-    }, {Get, jwt});
+    },
+                           {Get, jwt});
     server.registerHandler("/api/posts/{1}", [services](HttpRequestPtr request, std::string id) {
         return view_post(services, std::move(request), std::move(id));
-    }, {Get, jwt});
+    },
+                           {Get, jwt});
     server.registerHandler("/api/users/{1}/posts", [services](HttpRequestPtr request, std::string id) {
         return list_user_posts(services, std::move(request), std::move(id));
-    }, {Get, jwt});
+    },
+                           {Get, jwt});
     server.registerHandler("/api/posts", [services](HttpRequestPtr request) {
         return list_posts(services, std::move(request));
-    }, {Get, jwt});
+    },
+                           {Get, jwt});
     server.registerHandler("/api/posts", [services](HttpRequestPtr request) {
         return create_post(services, std::move(request));
-    }, {Post, jwt});
+    },
+                           {Post, jwt});
     server.registerHandler("/api/posts/{1}/comments", [services](HttpRequestPtr request, std::string id) {
         return list_comments(services, std::move(request), std::move(id));
-    }, {Get, jwt});
+    },
+                           {Get, jwt});
     server.registerHandler("/api/posts/{1}/comments", [services](HttpRequestPtr request, std::string id) {
         return create_comment(services, std::move(request), std::move(id));
-    }, {Post, jwt});
+    },
+                           {Post, jwt});
     server.registerHandler("/api/posts/{1}/like", [services](HttpRequestPtr request, std::string id) {
         return set_like(services, std::move(request), std::move(id), true);
-    }, {Put, jwt});
+    },
+                           {Put, jwt});
     server.registerHandler("/api/posts/{1}/like", [services](HttpRequestPtr request, std::string id) {
         return set_like(services, std::move(request), std::move(id), false);
-    }, {Delete, jwt});
+    },
+                           {Delete, jwt});
 }
 
 }
