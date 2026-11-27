@@ -11,9 +11,7 @@
 
 namespace APP_NAMESPACE {
 
-enum class LogLevel { info,
-                      warn,
-                      error };
+enum class LogLevel { info, warn, error };
 
 inline LogLevel parse_log_level(std::string_view value) {
     if (value == "info")
@@ -30,7 +28,8 @@ class Logger {
     explicit Logger(LogLevel minimum) : minimum_(minimum) {}
 
     template <class... Args>
-    void write(LogLevel level, std::format_string<Args...> format, Args&&... args) const {
+    void write(LogLevel level, std::format_string<Args...> format,
+               Args&&... args) const {
         if (level < minimum_)
             return;
         constexpr std::string_view labels[]{"INFO", "WARN", "ERROR"};

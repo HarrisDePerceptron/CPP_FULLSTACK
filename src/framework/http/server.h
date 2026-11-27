@@ -49,7 +49,8 @@ struct ResolvedServerConfig {
 using ServerSetup = std::function<std::shared_ptr<Workers>(
     drogon::HttpAppFramework&, const ResolvedServerConfig&, const Logger&)>;
 
-int run_http_server(drogon::HttpAppFramework& server, const std::filesystem::path& root,
+int run_http_server(drogon::HttpAppFramework& server,
+                    const std::filesystem::path& root,
                     const ServerConfig& config, const ServerSetup& setup);
 
 }

@@ -31,7 +31,9 @@ struct SocialLikeFields {
     static constexpr std::string_view table_name = "social_likes";
     RequiredForeign<SocialPost> post_id;
     RequiredForeign<UserRecord> user_id;
-    static constexpr auto constraints = CompositeUnique<&SocialLikeFields::post_id, &SocialLikeFields::user_id>{};
+    static constexpr auto constraints =
+        CompositeUnique<&SocialLikeFields::post_id,
+                        &SocialLikeFields::user_id>{};
 };
 using SocialLike = DaoRecord<SocialLikeFields>;
 

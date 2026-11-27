@@ -32,7 +32,8 @@ class WidgetDao final : public BaseDao<WidgetDao, WidgetRecord> {
     }
 
   private:
-    explicit WidgetDao(DatabaseBackendPtr database) : BaseDao(std::move(database)) {}
+    explicit WidgetDao(DatabaseBackendPtr database)
+        : BaseDao(std::move(database)) {}
 };
 
 struct Widgets {
@@ -73,7 +74,8 @@ struct Widgets {
                 throw CrudValidationError("Unknown create field.");
             }
         }
-        return {required_text(body["name"]), required_text(body["group"]), nullable_text(body["note"])};
+        return {required_text(body["name"]), required_text(body["group"]),
+                nullable_text(body["note"])};
     }
 
     static Patch parse_patch(const Json::Value& body) {
@@ -90,7 +92,8 @@ struct Widgets {
     }
 
     static WidgetRecord make_record(Create input) {
-        return {{std::move(input.name), std::move(input.group), std::move(input.note), "private"}};
+        return {{std::move(input.name), std::move(input.group),
+                 std::move(input.note), "private"}};
     }
 
     static void apply_patch(WidgetRecord& row, Patch input) {
@@ -100,7 +103,8 @@ struct Widgets {
             row.note = std::move(*input.note);
     }
 
-    static void add_filter(WidgetDao::EqualityFilters& filters, std::string_view name, std::string value) {
+    static void add_filter(WidgetDao::EqualityFilters& filters,
+                           std::string_view name, std::string value) {
         if (name == "name")
             filters.equal<&WidgetFields::name>(std::move(value));
         else if (name == "group")
@@ -127,7 +131,8 @@ class WidgetRouter final : public CrudRouter<WidgetService> {
     using CrudRouter::CrudRouter;
 
   protected:
-    drogon::Task<std::optional<Response>> get(const Request& request, Id id) const override {
+    drogon::Task<std::optional<Response>> get(const Request& request,
+                                              Id id) const override {
         auto item = co_await CrudRouter::get(request, id);
         if (item)
             item->group += "-router";
@@ -143,9 +148,11 @@ unsigned short free_port() {
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     socklen_t size = sizeof(address);
-    const auto status = bind(socket_fd, reinterpret_cast<sockaddr*>(&address), size) == 0
-                            ? getsockname(socket_fd, reinterpret_cast<sockaddr*>(&address), &size)
-                            : -1;
+    const auto status =
+        bind(socket_fd, reinterpret_cast<sockaddr*>(&address), size) == 0
+            ? getsockname(socket_fd, reinterpret_cast<sockaddr*>(&address),
+                          &size)
+            : -1;
     close(socket_fd);
     if (status != 0)
         throw std::runtime_error("Could not reserve fixture port");
@@ -193,21 +200,37 @@ class CrudServer {
                 auto& server = drogon::app();
                 server.addListener("127.0.0.1", port_).setThreadNum(1);
                 register_exception_handler(server, Logger(LogLevel::error));
-                server.registerHandler("/exceptions/busy", [](drogon::HttpRequestPtr) -> drogon::Task<drogon::HttpResponsePtr> {
-                    throw WorkersBusy{};
-                    co_return nullptr;
-                },
-                                       {drogon::Get});
-                server.registerHandler("/exceptions/unexpected", [](drogon::HttpRequestPtr) -> drogon::Task<drogon::HttpResponsePtr> {
-                    throw std::runtime_error("private fixture failure");
-                    co_return nullptr;
-                },
-                                       {drogon::Get});
-                for (const std::string prefix : {"/success", "/errors", "/edges"}) {
-                    auto database = drogon::sync_wait(open_sqlite_database(":memory:"));
-                    auto service = std::make_shared<WidgetService>(drogon::sync_wait(WidgetDao::init(database)));
-                    WidgetRouter::mount(server, prefix + "/widgets", std::make_shared<WidgetRouter>(service));
-                    WidgetRouter::mount(server, prefix + "/readonly", std::make_shared<WidgetRouter>(service, CrudMethods{.create = false, .patch = false, .remove = false}));
+                server.registerHandler(
+                    "/exceptions/busy",
+                    [](drogon::HttpRequestPtr)
+                        -> drogon::Task<drogon::HttpResponsePtr> {
+                        throw WorkersBusy{};
+                        co_return nullptr;
+                    },
+                    {drogon::Get});
+                server.registerHandler(
+                    "/exceptions/unexpected",
+                    [](drogon::HttpRequestPtr)
+                        -> drogon::Task<drogon::HttpResponsePtr> {
+                        throw std::runtime_error("private fixture failure");
+                        co_return nullptr;
+                    },
+                    {drogon::Get});
+                for (const std::string prefix :
+                     {"/success", "/errors", "/edges"}) {
+                    auto database =
+                        drogon::sync_wait(open_sqlite_database(":memory:"));
+                    auto service = std::make_shared<WidgetService>(
+                        drogon::sync_wait(WidgetDao::init(database)));
+                    WidgetRouter::mount(
+                        server, prefix + "/widgets",
+                        std::make_shared<WidgetRouter>(service));
+                    WidgetRouter::mount(
+                        server, prefix + "/readonly",
+                        std::make_shared<WidgetRouter>(
+                            service, CrudMethods{.create = false,
+                                                 .patch = false,
+                                                 .remove = false}));
                 }
                 server.registerBeginningAdvice([ready] { ready->set_value(); });
                 server.run();
@@ -223,7 +246,9 @@ class CrudServer {
         server_.wait();
     }
 
-    std::string base_url() const { return "http://127.0.0.1:" + std::to_string(port_); }
+    std::string base_url() const {
+        return "http://127.0.0.1:" + std::to_string(port_);
+    }
 
   private:
     unsigned short port_;
@@ -233,17 +258,20 @@ class CrudServer {
 class CrudClient {
   public:
     explicit CrudClient(std::string prefix)
-        : prefix_(std::move(prefix)), client_(drogon::HttpClient::newHttpClient(server().base_url())) {}
+        : prefix_(std::move(prefix)),
+          client_(drogon::HttpClient::newHttpClient(server().base_url())) {}
 
     drogon::HttpResponsePtr get(const std::string& path) const {
         return send(drogon::Get, path);
     }
 
-    drogon::HttpResponsePtr post(const std::string& path, const std::string& body) const {
+    drogon::HttpResponsePtr post(const std::string& path,
+                                 const std::string& body) const {
         return send(drogon::Post, path, body);
     }
 
-    drogon::HttpResponsePtr patch(const std::string& path, const std::string& body) const {
+    drogon::HttpResponsePtr patch(const std::string& path,
+                                  const std::string& body) const {
         return send(drogon::Patch, path, body);
     }
 
@@ -252,7 +280,8 @@ class CrudClient {
     }
 
   private:
-    drogon::HttpResponsePtr send(drogon::HttpMethod method, const std::string& path,
+    drogon::HttpResponsePtr send(drogon::HttpMethod method,
+                                 const std::string& path,
                                  const std::string& body = {}) const {
         const auto request = drogon::HttpRequest::newHttpRequest();
         request->setMethod(method);
@@ -277,9 +306,10 @@ class CrudClient {
 };
 
 std::string create_widget(const CrudClient& client) {
-    const auto created = check_reply(client.post("/widgets",
-                                                 R"({"name":"alpha","group":"one","note":"keep"})"),
-                                     201);
+    const auto created = check_reply(
+        client.post("/widgets",
+                    R"({"name":"alpha","group":"one","note":"keep"})"),
+        201);
     REQUIRE(created.size() == 1);
     CHECK_FALSE(created[0].isMember("private_value"));
     return "/widgets/" + std::to_string(created[0]["id"].asInt64());
@@ -295,7 +325,8 @@ TEST_CASE("The exception hook returns a 503 for a busy worker pool", "[http]") {
     CHECK((*json)["error"]["code"].asString() == "SERVICE_UNAVAILABLE");
 }
 
-TEST_CASE("The exception hook returns a generic 500 for unexpected errors", "[http]") {
+TEST_CASE("The exception hook returns a generic 500 for unexpected errors",
+          "[http]") {
     const crud_test::CrudClient client("/exceptions");
     const auto response = client.get("/unexpected");
     crud_test::check_reply(response, 500);
@@ -304,22 +335,33 @@ TEST_CASE("The exception hook returns a generic 500 for unexpected errors", "[ht
     CHECK((*json)["error"]["message"].asString() == "Internal server error.");
 }
 
-TEST_CASE("CRUD routes create, read, filter, update and delete resources", "[crud]") {
+TEST_CASE("CRUD routes create, read, filter, update and delete resources",
+          "[crud]") {
     using namespace crud_test;
     const CrudClient client("/success");
     const auto path = create_widget(client);
-    check_reply(client.post("/widgets", R"({"name":"beta","group":"one"})"), 201);
+    check_reply(client.post("/widgets", R"({"name":"beta","group":"one"})"),
+                201);
 
     const auto item = check_reply(client.get(path), 200);
     REQUIRE(item.size() == 1);
     CHECK(item[0]["group"].asString() == "one-service-router");
     CHECK_FALSE(item[0].isMember("private_value"));
-    CHECK(check_reply(client.get("/widgets?name=alpha&group=one"), 200, {1, 20, false}).size() == 1);
-    CHECK(check_reply(client.get("/widgets?group=one&per_page=1&page=2"), 200, {2, 1, false}).size() == 1);
-    CHECK(check_reply(client.get("/widgets?group=one&per_page=1"), 200, {1, 1, true}).size() == 1);
-    CHECK(check_reply(client.get("/widgets?group=one&per_page=1&page=3"), 200, {3, 1, false}).empty());
+    CHECK(check_reply(client.get("/widgets?name=alpha&group=one"), 200,
+                      {1, 20, false})
+              .size() == 1);
+    CHECK(check_reply(client.get("/widgets?group=one&per_page=1&page=2"), 200,
+                      {2, 1, false})
+              .size() == 1);
+    CHECK(check_reply(client.get("/widgets?group=one&per_page=1"), 200,
+                      {1, 1, true})
+              .size() == 1);
+    CHECK(check_reply(client.get("/widgets?group=one&per_page=1&page=3"), 200,
+                      {3, 1, false})
+              .empty());
 
-    const auto updated = check_reply(client.patch(path, R"({"name":"gamma"})"), 200);
+    const auto updated =
+        check_reply(client.patch(path, R"({"name":"gamma"})"), 200);
     REQUIRE(updated.size() == 1);
     CHECK(updated[0]["name"].asString() == "gamma");
     CHECK(updated[0]["note"].asString() == "keep");
@@ -327,13 +369,17 @@ TEST_CASE("CRUD routes create, read, filter, update and delete resources", "[cru
     check_reply(client.get(path), 404);
 }
 
-TEST_CASE("CRUD routes reject invalid requests and roll back conflicting patches", "[crud]") {
+TEST_CASE(
+    "CRUD routes reject invalid requests and roll back conflicting patches",
+    "[crud]") {
     using namespace crud_test;
     const CrudClient client("/errors");
     const auto path = create_widget(client);
-    check_reply(client.post("/widgets", R"({"name":"beta","group":"one"})"), 201);
+    check_reply(client.post("/widgets", R"({"name":"beta","group":"one"})"),
+                201);
 
-    check_reply(client.post("/widgets", R"({"name":"alpha","group":"one"})"), 409);
+    check_reply(client.post("/widgets", R"({"name":"alpha","group":"one"})"),
+                409);
     check_reply(client.get("/widgets?per_page=101"), 400);
     check_reply(client.get("/widgets?private_value=private"), 400);
     check_reply(client.get("/widgets/not-an-id"), 400);
@@ -348,13 +394,18 @@ TEST_CASE("CRUD routes reject invalid requests and roll back conflicting patches
     CHECK(item[0]["note"].asString() == "keep");
 }
 
-TEST_CASE("CRUD routes handle empty results, explicit null and disabled methods", "[crud]") {
+TEST_CASE(
+    "CRUD routes handle empty results, explicit null and disabled methods",
+    "[crud]") {
     using namespace crud_test;
     const CrudClient client("/edges");
     const auto path = create_widget(client);
 
-    CHECK(check_reply(client.get("/widgets?name=alpha&group=two"), 200, {1, 20, false}).empty());
-    const auto cleared = check_reply(client.patch(path, R"({"note":null})"), 200);
+    CHECK(check_reply(client.get("/widgets?name=alpha&group=two"), 200,
+                      {1, 20, false})
+              .empty());
+    const auto cleared =
+        check_reply(client.patch(path, R"({"note":null})"), 200);
     REQUIRE(cleared.size() == 1);
     CHECK(cleared[0]["note"].isNull());
 
@@ -362,7 +413,8 @@ TEST_CASE("CRUD routes handle empty results, explicit null and disabled methods"
     check_reply(disabled_post, 405);
     CHECK(disabled_post->getHeader("allow") == "GET");
 
-    const auto disabled_patch = client.patch("/readonly" + path.substr(path.rfind('/')), "{}");
+    const auto disabled_patch =
+        client.patch("/readonly" + path.substr(path.rfind('/')), "{}");
     check_reply(disabled_patch, 405);
     CHECK(disabled_patch->getHeader("allow") == "GET");
 

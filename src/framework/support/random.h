@@ -9,8 +9,7 @@
 
 namespace APP_NAMESPACE {
 
-template <std::size_t Bytes>
-std::string random_hex() {
+template <std::size_t Bytes> std::string random_hex() {
     std::array<unsigned char, Bytes> bytes;
     std::array<char, Bytes * 2 + 1> hex;
     randombytes_buf(bytes.data(), bytes.size());

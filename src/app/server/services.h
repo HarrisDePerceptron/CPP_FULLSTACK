@@ -16,11 +16,12 @@
 namespace APP_NAMESPACE {
 
 struct Services {
-    Services(const ResolvedServerConfig& server, const Config& config, const Logger& logger,
-             std::string key, UserService user_service, SocialService social_service)
-        : users(std::move(user_service)),
-          social(std::move(social_service)),
-          tokens(std::move(key), std::chrono::seconds{config.jwt_lifetime_seconds}),
+    Services(const ResolvedServerConfig& server, const Config& config,
+             const Logger& logger, std::string key, UserService user_service,
+             SocialService social_service)
+        : users(std::move(user_service)), social(std::move(social_service)),
+          tokens(std::move(key),
+                 std::chrono::seconds{config.jwt_lifetime_seconds}),
           uploads(server.uploads_directory, server.max_upload_bytes),
           log(logger) {}
 
@@ -32,7 +33,8 @@ struct Services {
     Workers workers;
 };
 
-std::shared_ptr<Services> initialize_services(const ResolvedServerConfig& server, const Config& config,
-                                              const Logger& log);
+std::shared_ptr<Services>
+initialize_services(const ResolvedServerConfig& server, const Config& config,
+                    const Logger& log);
 
 }

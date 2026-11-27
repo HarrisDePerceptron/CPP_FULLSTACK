@@ -25,15 +25,19 @@ class JwtMiddleware : public HttpCoroMiddleware<JwtMiddleware, false> {
         if (header.empty()) {
             token = request->getCookie(session_cookie_name);
         } else if (header.size() > prefix.size() &&
-                   strncasecmp(header.data(), prefix.data(), prefix.size()) == 0) {
+                   strncasecmp(header.data(), prefix.data(), prefix.size()) ==
+                       0) {
             token = std::string_view(header).substr(prefix.size());
         }
         if (auto username = tokens_->verify(token)) {
-            request->attributes()->insert(subject_attribute, std::move(*username));
+            request->attributes()->insert(subject_attribute,
+                                          std::move(*username));
             co_return co_await std::move(next);
         }
 
-        auto response = api_error(*request, k401Unauthorized, "UNAUTHORIZED", "A valid session or Bearer token is required.");
+        auto response =
+            api_error(*request, k401Unauthorized, "UNAUTHORIZED",
+                      "A valid session or Bearer token is required.");
         response->addHeader("WWW-Authenticate", "Bearer");
         response->addHeader("Cache-Control", "no-store");
         co_return response;
@@ -45,8 +49,10 @@ class JwtMiddleware : public HttpCoroMiddleware<JwtMiddleware, false> {
 
 }
 
-std::string register_jwt_middleware(drogon::HttpAppFramework& server, std::shared_ptr<const Tokens> tokens) {
-    server.registerMiddleware(std::make_shared<JwtMiddleware>(std::move(tokens)));
+std::string register_jwt_middleware(drogon::HttpAppFramework& server,
+                                    std::shared_ptr<const Tokens> tokens) {
+    server.registerMiddleware(
+        std::make_shared<JwtMiddleware>(std::move(tokens)));
     return JwtMiddleware::classTypeName();
 }
 

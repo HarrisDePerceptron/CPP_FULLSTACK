@@ -55,8 +55,7 @@ inline std::string environment_name(std::string_view key) {
     return name;
 }
 
-template <class T>
-void apply_environment(T& config) {
+template <class T> void apply_environment(T& config) {
     std::size_t index = 0;
     glz::for_each_field(config, [&index](auto& field) {
         const auto name = environment_name(glz::reflect<T>::keys[index++]);
@@ -98,29 +97,33 @@ inline void load_environment(const std::filesystem::path& env_path) {
 
         const auto equal = assignment.find('=');
         const auto name = config_detail::trim(assignment.substr(0, equal));
-        if (equal == std::string_view::npos || !config_detail::valid_environment_name(name) ||
+        if (equal == std::string_view::npos ||
+            !config_detail::valid_environment_name(name) ||
             assignment.contains('\0')) {
-            throw std::runtime_error("invalid .env assignment on line " + std::to_string(line_number));
+            throw std::runtime_error("invalid .env assignment on line " +
+                                     std::to_string(line_number));
         }
 
         auto value = config_detail::trim(assignment.substr(equal + 1));
         if (value.starts_with('"') || value.starts_with('\'')) {
             if (value.size() < 2 || value.back() != value.front()) {
-                throw std::runtime_error("unclosed .env quote on line " + std::to_string(line_number));
+                throw std::runtime_error("unclosed .env quote on line " +
+                                         std::to_string(line_number));
             }
             value = value.substr(1, value.size() - 2);
         }
 
-        if (setenv(std::string(name).c_str(), std::string(value).c_str(), 0) != 0) {
-            throw std::runtime_error("could not load .env assignment on line " + std::to_string(line_number));
+        if (setenv(std::string(name).c_str(), std::string(value).c_str(), 0) !=
+            0) {
+            throw std::runtime_error("could not load .env assignment on line " +
+                                     std::to_string(line_number));
         }
     }
     if (input.bad())
         throw std::runtime_error("could not read .env");
 }
 
-template <glz::reflectable T>
-T read_config(const std::filesystem::path& path) {
+template <glz::reflectable T> T read_config(const std::filesystem::path& path) {
     const auto json = config_detail::read_json_file(path);
     T config{};
     if (glz::validate_json(json) || glz::read_json(config, json)) {
@@ -128,14 +131,15 @@ T read_config(const std::filesystem::path& path) {
     }
 
     config_detail::apply_environment(config);
-    if constexpr (requires(const T& value) { { value.validate() } -> std::same_as<void>; }) {
+    if constexpr (requires(const T& value) {
+                      { value.validate() } -> std::same_as<void>;
+                  }) {
         static_cast<const T&>(config).validate();
     }
     return config;
 }
 
-template <glz::reflectable T>
-T load_config(const std::filesystem::path& root) {
+template <glz::reflectable T> T load_config(const std::filesystem::path& root) {
     load_environment(root / ".env");
     return read_config<T>(root / "config.json");
 }

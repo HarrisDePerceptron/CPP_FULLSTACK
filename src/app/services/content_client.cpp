@@ -8,13 +8,15 @@
 
 namespace APP_NAMESPACE {
 
-drogon::Task<std::expected<Content, ContentError>> fetch_content(
-    std::string origin, std::string path, std::chrono::milliseconds timeout) {
+drogon::Task<std::expected<Content, ContentError>>
+fetch_content(std::string origin, std::string path,
+              std::chrono::milliseconds timeout) {
     auto client = drogon::HttpClient::newHttpClient(
         origin, trantor::EventLoop::getEventLoopOfCurrentThread());
 #ifdef __APPLE__
     // Xmake's OpenSSL searches its own installation for a default CA bundle.
-    if (client->secure() && !std::getenv("SSL_CERT_FILE") && !std::getenv("SSL_CERT_DIR")) {
+    if (client->secure() && !std::getenv("SSL_CERT_FILE") &&
+        !std::getenv("SSL_CERT_DIR")) {
         client->addSSLConfigs({{"VerifyCAFile", "/etc/ssl/cert.pem"}});
     }
 #endif

@@ -32,14 +32,14 @@ Integer parse_crud_integer(std::string_view text) {
     return value;
 }
 
-template <typename Service>
-class CrudRouter {
+template <typename Service> class CrudRouter {
   public:
     using Response = typename Service::Response;
     using Id = typename Service::Id;
     using Policy = typename Service::Policy;
 
-    explicit CrudRouter(std::shared_ptr<const Service> service, CrudMethods methods = {})
+    explicit CrudRouter(std::shared_ptr<const Service> service,
+                        CrudMethods methods = {})
         : service_(std::move(service)), methods_(methods) {
         if (!service_)
             throw std::invalid_argument("CRUD router requires a service");
@@ -54,8 +54,18 @@ class CrudRouter {
         std::vector<drogon::internal::HttpConstraint> constraints;
         for (const auto& name : middleware)
             constraints.emplace_back(name);
-        server.registerHandler(path, [router](drogon::HttpRequestPtr request) { return router->dispatch(std::move(request)); }, constraints);
-        server.registerHandler(path + "/{1}", [router](drogon::HttpRequestPtr request, std::string id) { return router->dispatch(std::move(request), std::move(id)); }, constraints);
+        server.registerHandler(
+            path,
+            [router](drogon::HttpRequestPtr request) {
+                return router->dispatch(std::move(request));
+            },
+            constraints);
+        server.registerHandler(
+            path + "/{1}",
+            [router](drogon::HttpRequestPtr request, std::string id) {
+                return router->dispatch(std::move(request), std::move(id));
+            },
+            constraints);
     }
 
   protected:
@@ -64,7 +74,8 @@ class CrudRouter {
 
     const Service& service() const { return *service_; }
 
-    virtual drogon::Task<Items> list(const Request& request, CrudPage page) const {
+    virtual drogon::Task<Items> list(const Request& request,
+                                     CrudPage page) const {
         typename Service::Filters filters;
         for (const auto& [name, value] : request.parameters()) {
             if (name != "page" && name != "per_page")
@@ -73,7 +84,8 @@ class CrudRouter {
         return service_->list(page, std::move(filters));
     }
 
-    virtual drogon::Task<std::optional<Response>> get(const Request&, Id id) const {
+    virtual drogon::Task<std::optional<Response>> get(const Request&,
+                                                      Id id) const {
         return service_->get(std::move(id));
     }
 
@@ -81,8 +93,10 @@ class CrudRouter {
         return service_->create(Policy::parse_create(object_body(request)));
     }
 
-    virtual drogon::Task<std::optional<Response>> patch(const Request& request, Id id) const {
-        return service_->patch(std::move(id), Policy::parse_patch(object_body(request)));
+    virtual drogon::Task<std::optional<Response>> patch(const Request& request,
+                                                        Id id) const {
+        return service_->patch(std::move(id),
+                               Policy::parse_patch(object_body(request)));
     }
 
     virtual drogon::Task<bool> remove(const Request&, Id id) const {
@@ -100,7 +114,8 @@ class CrudRouter {
             page.per_page = parse_crud_integer<std::int64_t>(it->second);
         }
         if (page.page < 1 || page.per_page < 1 || page.per_page > 100 ||
-            page.page - 1 > std::numeric_limits<std::int64_t>::max() / page.per_page) {
+            page.page - 1 >
+                std::numeric_limits<std::int64_t>::max() / page.per_page) {
             throw CrudValidationError("Invalid pagination.");
         }
         return page;
@@ -128,7 +143,8 @@ class CrudRouter {
         }
     }
 
-    drogon::HttpResponsePtr method_not_allowed(const Request& request, bool item) const {
+    drogon::HttpResponsePtr method_not_allowed(const Request& request,
+                                               bool item) const {
         using namespace drogon;
         std::string allow;
         const auto append = [&](bool enabled, std::string_view method) {
@@ -145,20 +161,24 @@ class CrudRouter {
         } else {
             append(methods_.create, "POST");
         }
-        auto response = api_error(request, k405MethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed.");
+        auto response = api_error(request, k405MethodNotAllowed,
+                                  "METHOD_NOT_ALLOWED", "Method not allowed.");
         response->addHeader("Allow", std::move(allow));
         return response;
     }
 
-    drogon::Task<drogon::HttpResponsePtr> dispatch(drogon::HttpRequestPtr request,
-                                                   std::optional<std::string> id = {}) const {
+    drogon::Task<drogon::HttpResponsePtr>
+    dispatch(drogon::HttpRequestPtr request,
+             std::optional<std::string> id = {}) const {
         using namespace drogon;
         try {
             const auto method = request->method();
             if (!id) {
                 if (method == Get && methods_.list) {
                     auto page = pagination(*request);
-                    auto items = co_await list(*request, {page.per_page + 1, (page.page - 1) * page.per_page});
+                    auto items = co_await list(
+                        *request,
+                        {page.per_page + 1, (page.page - 1) * page.per_page});
                     const auto limit = static_cast<std::size_t>(page.per_page);
                     page.has_more = items.size() > limit;
                     if (page.has_more)
@@ -166,7 +186,8 @@ class CrudRouter {
                     co_return api_ok(*request, std::move(items), page);
                 }
                 if (method == Post && methods_.create)
-                    co_return api_ok(*request, co_await create(*request), k201Created);
+                    co_return api_ok(*request, co_await create(*request),
+                                     k201Created);
                 co_return method_not_allowed(*request, false);
             }
             if (method == Get && methods_.get) {
@@ -183,7 +204,8 @@ class CrudRouter {
             } else {
                 co_return method_not_allowed(*request, true);
             }
-            co_return api_error(*request, k404NotFound, "NOT_FOUND", "Resource not found.");
+            co_return api_error(*request, k404NotFound, "NOT_FOUND",
+                                "Resource not found.");
         } catch (const std::exception& error) {
             co_return api_exception(*request, error);
         }

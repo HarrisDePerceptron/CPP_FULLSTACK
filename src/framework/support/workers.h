@@ -39,8 +39,7 @@ class Workers {
 
     ~Workers() { stop(); }
 
-    template <class Work>
-    auto submit(Work work) {
+    template <class Work> auto submit(Work work) {
         return Awaiter<Work>{*this, std::move(work), std::nullopt, {}};
     }
 
@@ -56,8 +55,7 @@ class Workers {
     }
 
   private:
-    template <class Work>
-    struct Awaiter {
+    template <class Work> struct Awaiter {
         Workers& workers;
         Work work;
         std::optional<std::invoke_result_t<Work>> result;
@@ -101,7 +99,8 @@ class Workers {
             std::function<void()> job;
             {
                 std::unique_lock lock(mutex_);
-                ready_.wait(lock, [this] { return closed_ || !pending_.empty(); });
+                ready_.wait(lock,
+                            [this] { return closed_ || !pending_.empty(); });
                 if (pending_.empty())
                     return;
                 job = std::move(pending_.front());

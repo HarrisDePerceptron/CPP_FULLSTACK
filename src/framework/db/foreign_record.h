@@ -8,15 +8,16 @@
 
 namespace APP_NAMESPACE {
 
-template <typename Record, bool nullable = true>
-class Foreign {
+template <typename Record, bool nullable = true> class Foreign {
   public:
     using TargetRecord = Record;
-    using Key = std::conditional_t<nullable, std::optional<typename Record::Id>, typename Record::Id>;
+    using Key = std::conditional_t<nullable, std::optional<typename Record::Id>,
+                                   typename Record::Id>;
 
     Foreign() = default;
     template <typename U>
-        requires(!std::same_as<std::remove_cvref_t<U>, Foreign>) && std::constructible_from<Key, U>
+        requires(!std::same_as<std::remove_cvref_t<U>, Foreign>) &&
+                std::constructible_from<Key, U>
     Foreign(U&& key) : key_(std::forward<U>(key)) {}
 
     const Key& key() const { return key_; }
@@ -47,17 +48,17 @@ class Foreign {
     std::optional<Record> record_;
 };
 
-template <typename Record>
-using RequiredForeign = Foreign<Record, false>;
+template <typename Record> using RequiredForeign = Foreign<Record, false>;
 
 namespace detail {
 
-template <typename T>
-struct ForeignField;
+template <typename T> struct ForeignField;
 
 template <typename Record, bool nullable>
 struct ForeignField<Foreign<Record, nullable>> {
-    static Foreign<Record, nullable>& get(Foreign<Record, nullable>& field) { return field; }
+    static Foreign<Record, nullable>& get(Foreign<Record, nullable>& field) {
+        return field;
+    }
 };
 
 template <typename T, ColumnConstraint Constraint>
@@ -70,16 +71,20 @@ struct ForeignField<SchemaField<T, Constraint>> {
 
 template <typename T>
     requires requires(T& field) { ForeignField<T>::get(field); }
-decltype(auto) foreign_field(T& field) { return ForeignField<T>::get(field); }
+decltype(auto) foreign_field(T& field) {
+    return ForeignField<T>::get(field);
+}
 
-template <auto member, typename Dao>
-struct ForeignSelection {
+template <auto member, typename Dao> struct ForeignSelection {
     std::reference_wrapper<const Dao> dao;
 };
 
 template <auto member, typename Source, typename Dao>
 concept ForeignSelectionFor = requires(Source& source) {
-    requires std::same_as<typename std::remove_reference_t<decltype(foreign_field(source.*member))>::TargetRecord, typename Dao::RecordType>;
+    requires std::same_as<
+        typename std::remove_reference_t<decltype(foreign_field(
+            source.*member))>::TargetRecord,
+        typename Dao::RecordType>;
 };
 
 template <typename Record, bool nullable>
@@ -89,8 +94,12 @@ struct FieldTraits<Foreign<Record, nullable>> {
     static constexpr bool primary = false, unique = false, indexed = false;
 
     static const Value& unwrap(const Field& field) { return field.key(); }
-    static void set_key(Field& field, Value key) { field.set_key(std::move(key)); }
-    static std::optional<ColumnDefault> default_metadata() { return std::nullopt; }
+    static void set_key(Field& field, Value key) {
+        field.set_key(std::move(key));
+    }
+    static std::optional<ColumnDefault> default_metadata() {
+        return std::nullopt;
+    }
     static constexpr std::optional<ForeignKey> foreign_key() {
         return ForeignKey{Record::table_name, Record::key_column};
     }
@@ -98,9 +107,9 @@ struct FieldTraits<Foreign<Record, nullable>> {
 
 }
 
-template <auto member, typename Dao>
-auto with_foreign(Dao& dao) {
-    return detail::ForeignSelection<member, std::remove_cv_t<Dao>>{std::cref(dao)};
+template <auto member, typename Dao> auto with_foreign(Dao& dao) {
+    return detail::ForeignSelection<member, std::remove_cv_t<Dao>>{
+        std::cref(dao)};
 }
 
 }

@@ -43,12 +43,24 @@ struct GlazeTraits {
         throw std::invalid_argument("invalid JWT JSON claim type");
     }
 
-    static object_type as_object(const value_type& value) { return value.get<object_type>(); }
-    static array_type as_array(const value_type& value) { return value.get<array_type>(); }
-    static string_type as_string(const value_type& value) { return value.get<string_type>(); }
-    static number_type as_number(const value_type& value) { return value.get<number_type>(); }
-    static integer_type as_integer(const value_type& value) { return value.get<integer_type>(); }
-    static boolean_type as_boolean(const value_type& value) { return value.get<boolean_type>(); }
+    static object_type as_object(const value_type& value) {
+        return value.get<object_type>();
+    }
+    static array_type as_array(const value_type& value) {
+        return value.get<array_type>();
+    }
+    static string_type as_string(const value_type& value) {
+        return value.get<string_type>();
+    }
+    static number_type as_number(const value_type& value) {
+        return value.get<number_type>();
+    }
+    static integer_type as_integer(const value_type& value) {
+        return value.get<integer_type>();
+    }
+    static boolean_type as_boolean(const value_type& value) {
+        return value.get<boolean_type>();
+    }
 
     static bool parse(value_type& value, string_type text) {
         return !glz::validate_json(text) && !glz::read_json(value, text);
@@ -69,9 +81,10 @@ std::string load_signing_key() {
     if (const auto* configured = std::getenv("APP_JWT_SECRET")) {
         const std::string_view hex(configured);
         if (hex.size() != key.size() * 2 ||
-            sodium_hex2bin(key.data(), key.size(), hex.data(), hex.size(), nullptr,
-                           nullptr, nullptr) != 0) {
-            throw std::runtime_error("APP_JWT_SECRET must contain 64 hexadecimal characters");
+            sodium_hex2bin(key.data(), key.size(), hex.data(), hex.size(),
+                           nullptr, nullptr, nullptr) != 0) {
+            throw std::runtime_error(
+                "APP_JWT_SECRET must contain 64 hexadecimal characters");
         }
     } else {
         randombytes_buf(key.data(), key.size());
@@ -82,7 +95,8 @@ std::string load_signing_key() {
 }
 
 std::string Tokens::issue(std::string_view username) const {
-    const auto now = std::chrono::floor<std::chrono::seconds>(jwt::date::clock::now());
+    const auto now =
+        std::chrono::floor<std::chrono::seconds>(jwt::date::clock::now());
     return jwt::create<GlazeTraits>()
         .set_type("JWT")
         .set_issuer(issuer)

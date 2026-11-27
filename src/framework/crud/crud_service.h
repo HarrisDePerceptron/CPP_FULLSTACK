@@ -14,8 +14,7 @@ struct CrudPage {
     std::int64_t offset = 0;
 };
 
-template <typename Dao, typename Resource>
-class CrudService {
+template <typename Dao, typename Resource> class CrudService {
   public:
     using Policy = Resource;
     using Record = typename Dao::RecordType;
@@ -28,8 +27,13 @@ class CrudService {
     explicit CrudService(Dao dao) : dao_(std::move(dao)) {}
     virtual ~CrudService() = default;
 
-    virtual drogon::Task<std::vector<Response>> list(CrudPage page, Filters filters) const {
-        const auto rows = co_await dao_.find().limit(page.limit).offset(page.offset).matching(std::move(filters)).collect();
+    virtual drogon::Task<std::vector<Response>> list(CrudPage page,
+                                                     Filters filters) const {
+        const auto rows = co_await dao_.find()
+                              .limit(page.limit)
+                              .offset(page.offset)
+                              .matching(std::move(filters))
+                              .collect();
         std::vector<Response> result;
         result.reserve(rows.size());
         for (const auto& row : rows)
@@ -47,7 +51,8 @@ class CrudService {
     virtual drogon::Task<Response> create(Create input) const {
         std::optional<Response> result;
         co_await dao_.transaction([&](DaoTransaction& tx) -> drogon::Task<> {
-            const auto id = co_await dao_.create(tx, Resource::make_record(std::move(input)));
+            const auto id = co_await dao_.create(
+                tx, Resource::make_record(std::move(input)));
             const auto row = co_await dao_.find_by_id(tx, id).collect();
             if (!row)
                 throw std::logic_error("Created row could not be read");
@@ -56,7 +61,8 @@ class CrudService {
         co_return std::move(result).value();
     }
 
-    virtual drogon::Task<std::optional<Response>> patch(Id id, Patch input) const {
+    virtual drogon::Task<std::optional<Response>> patch(Id id,
+                                                        Patch input) const {
         std::optional<Response> result;
         co_await dao_.transaction([&](DaoTransaction& tx) -> drogon::Task<> {
             auto row = co_await dao_.find_by_id(tx, id).collect();

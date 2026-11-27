@@ -32,17 +32,21 @@ class LocalResponse {
         if (listener_ < 0)
             throw std::runtime_error("could not create fixture socket");
         try {
-            if (bind(listener_, reinterpret_cast<sockaddr*>(&address), size) != 0 ||
+            if (bind(listener_, reinterpret_cast<sockaddr*>(&address), size) !=
+                    0 ||
                 listen(listener_, 1) != 0 ||
-                getsockname(listener_, reinterpret_cast<sockaddr*>(&address), &size) != 0) {
+                getsockname(listener_, reinterpret_cast<sockaddr*>(&address),
+                            &size) != 0) {
                 throw std::runtime_error("could not bind local HTTP fixture");
             }
             port_ = ntohs(address.sin_port);
-            const auto response = "HTTP/1.1 " + status + "\r\nContent-Type: application/json\r\n"
-                                                         "Connection: close\r\nContent-Length: " +
-                                  std::to_string(body.size()) +
-                                  "\r\n\r\n" + body;
-            thread_ = std::thread([this, response, delay] { reply(response, delay); });
+            const auto response = "HTTP/1.1 " + status +
+                                  "\r\nContent-Type: application/json\r\n"
+                                  "Connection: close\r\nContent-Length: " +
+                                  std::to_string(body.size()) + "\r\n\r\n" +
+                                  body;
+            thread_ = std::thread(
+                [this, response, delay] { reply(response, delay); });
         } catch (...) {
             close(listener_);
             throw;
@@ -54,10 +58,13 @@ class LocalResponse {
         close(listener_);
     }
 
-    std::string origin() const { return "http://127.0.0.1:" + std::to_string(port_); }
+    std::string origin() const {
+        return "http://127.0.0.1:" + std::to_string(port_);
+    }
 
   private:
-    void reply(std::string_view response, std::chrono::milliseconds delay) const {
+    void reply(std::string_view response,
+               std::chrono::milliseconds delay) const {
         pollfd incoming{listener_, POLLIN, 0};
         if (poll(&incoming, 1, 3000) <= 0)
             return;
@@ -74,10 +81,12 @@ class LocalResponse {
 #endif
         pollfd readable{client, POLLIN, 0};
         std::array<char, 4096> buffer;
-        if (poll(&readable, 1, 3000) > 0 && recv(client, buffer.data(), buffer.size(), 0) > 0) {
+        if (poll(&readable, 1, 3000) > 0 &&
+            recv(client, buffer.data(), buffer.size(), 0) > 0) {
             std::this_thread::sleep_for(delay);
             while (!response.empty()) {
-                const auto sent = send(client, response.data(), response.size(), send_flags);
+                const auto sent =
+                    send(client, response.data(), response.size(), send_flags);
                 if (sent <= 0)
                     break;
                 response.remove_prefix(static_cast<std::size_t>(sent));
@@ -91,19 +100,23 @@ class LocalResponse {
     std::thread thread_;
 };
 
-std::expected<Content, ContentError> fetch_local_content(
-    const LocalResponse& fixture, std::chrono::milliseconds timeout = 5s) {
+std::expected<Content, ContentError>
+fetch_local_content(const LocalResponse& fixture,
+                    std::chrono::milliseconds timeout = 5s) {
     trantor::EventLoopThread thread;
     thread.run();
-    const auto run = [&]() -> drogon::Task<std::expected<Content, ContentError>> {
+    const auto run =
+        [&]() -> drogon::Task<std::expected<Content, ContentError>> {
         co_await drogon::switchThreadCoro(thread.getLoop());
         co_return co_await fetch_content(fixture.origin(), "/todo", timeout);
     };
     return drogon::sync_wait(run());
 }
 
-TEST_CASE("The content client fetches and validates JSON over HTTP", "[content]") {
-    const LocalResponse fixture("200 OK", R"({"id":1,"title":"Test todo","completed":false})");
+TEST_CASE("The content client fetches and validates JSON over HTTP",
+          "[content]") {
+    const LocalResponse fixture(
+        "200 OK", R"({"id":1,"title":"Test todo","completed":false})");
     const auto content = fetch_local_content(fixture);
     REQUIRE(content.has_value());
     CHECK(content->id == 1);
@@ -111,7 +124,9 @@ TEST_CASE("The content client fetches and validates JSON over HTTP", "[content]"
     CHECK_FALSE(content->completed);
 }
 
-TEST_CASE("Upstream HTTP and JSON errors, oversized replies, and timeouts are handled", "[content]") {
+TEST_CASE("Upstream HTTP and JSON errors, oversized replies, and timeouts are "
+          "handled",
+          "[content]") {
     SECTION("HTTP error") {
         const LocalResponse fixture("503 Unavailable", "{}");
         CHECK(fetch_local_content(fixture).error() == ContentError::upstream);
@@ -126,7 +141,8 @@ TEST_CASE("Upstream HTTP and JSON errors, oversized replies, and timeouts are ha
     }
     SECTION("Timeout") {
         const LocalResponse fixture("200 OK", "{}", 200ms);
-        CHECK(fetch_local_content(fixture, 50ms).error() == ContentError::timeout);
+        CHECK(fetch_local_content(fixture, 50ms).error() ==
+              ContentError::timeout);
     }
 }
 }

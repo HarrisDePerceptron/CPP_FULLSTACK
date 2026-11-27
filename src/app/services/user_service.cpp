@@ -25,31 +25,40 @@ drogon::Task<std::optional<Credentials>> UserService::seed_demo() const {
         co_return std::nullopt;
 
     Credentials credentials{"demo-" + random_hex<6>(), random_hex<16>()};
-    if (!co_await dao_.insert_demo(credentials.username, hash_password(credentials.password)))
+    if (!co_await dao_.insert_demo(credentials.username,
+                                   hash_password(credentials.password)))
         co_return std::nullopt;
     co_return credentials;
 }
 
-drogon::Task<> UserService::configure_demo(std::string username, std::string password) const {
+drogon::Task<> UserService::configure_demo(std::string username,
+                                           std::string password) const {
     co_await dao_.replace_demo(std::move(username), hash_password(password));
 }
 
-drogon::Task<std::optional<UserRecord::Id>> UserService::find_id(std::string username) const {
+drogon::Task<std::optional<UserRecord::Id>>
+UserService::find_id(std::string username) const {
     const auto user = co_await dao_.find_by_username(std::move(username));
     co_return user ? user->id : std::nullopt;
 }
 
-drogon::Task<bool> UserService::signup(Credentials credentials, Workers& workers) const {
-    auto hash = co_await workers.submit([&] { return hash_password(credentials.password); });
-    co_return co_await dao_.insert_account(std::move(credentials.username), std::move(hash));
+drogon::Task<bool> UserService::signup(Credentials credentials,
+                                       Workers& workers) const {
+    auto hash = co_await workers.submit(
+        [&] { return hash_password(credentials.password); });
+    co_return co_await dao_.insert_account(std::move(credentials.username),
+                                           std::move(hash));
 }
 
-drogon::Task<bool> UserService::authenticate(std::string username, std::string password, Workers& workers) const {
+drogon::Task<bool> UserService::authenticate(std::string username,
+                                             std::string password,
+                                             Workers& workers) const {
     const auto user = co_await dao_.find_by_username(std::move(username));
     if (!user)
         co_return false;
     co_return co_await workers.submit([&] {
-        return crypto_pwhash_str_verify(user->password_hash.c_str(), password.data(), password.size()) == 0;
+        return crypto_pwhash_str_verify(user->password_hash.c_str(),
+                                        password.data(), password.size()) == 0;
     });
 }
 

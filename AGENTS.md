@@ -31,7 +31,7 @@ Config fields resolve from the process environment, then `.env`, then `config.js
 
 ## Coding Style
 
-Use the root `.clang-format` for C++ formatting. Use four spaces and place opening braces on the declaration line. Use `.h` for C++ headers and `.cpp` for implementations. Keep route handlers small and delegate persistence and outbound calls to their modules. Always use `co_await` for asynchronous application code and `std::println` for console output, including logs. Use `api_ok` and `api_error` for typed API responses.
+Use the root `.clang-format` for C++ formatting. Use four spaces, target 80 columns, and place opening braces on the declaration line. Use `.h` for C++ headers and `.cpp` for implementations. Keep route handlers small and delegate persistence and outbound calls to their modules. Always use `co_await` for asynchronous application code and `std::println` for console output, including logs. Use `api_ok` and `api_error` for typed API responses.
 
 Use `snake_case` for project-owned C++ functions, methods, variables, fields, constants, and enum values. Use `PascalCase` for project-owned types. Keep existing macro spellings and use third-party identifiers as declared, including Drogon methods such as `registerHandler()`. Preserve existing JSON keys, configuration keys, and stored database names when renaming C++ identifiers.
 

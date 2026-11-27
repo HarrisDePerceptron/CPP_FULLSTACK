@@ -17,12 +17,11 @@ struct Content {
     bool completed;
 };
 
-enum class ContentError { timeout,
-                          upstream };
+enum class ContentError { timeout, upstream };
 
-drogon::Task<std::expected<Content, ContentError>> fetch_content(
-    std::string origin = "https://jsonplaceholder.typicode.com",
-    std::string path = "/todos/1",
-    std::chrono::milliseconds timeout = std::chrono::seconds(5));
+drogon::Task<std::expected<Content, ContentError>>
+fetch_content(std::string origin = "https://jsonplaceholder.typicode.com",
+              std::string path = "/todos/1",
+              std::chrono::milliseconds timeout = std::chrono::seconds(5));
 
 }

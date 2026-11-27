@@ -27,7 +27,8 @@ std::optional<UploadType> detect(std::string_view bytes) {
         return jpeg;
     if (bytes.starts_with("GIF87a") || bytes.starts_with("GIF89a"))
         return gif;
-    if (bytes.size() >= 12 && bytes.starts_with("RIFF") && bytes.substr(8, 4) == "WEBP") {
+    if (bytes.size() >= 12 && bytes.starts_with("RIFF") &&
+        bytes.substr(8, 4) == "WEBP") {
         return webp;
     }
     return std::nullopt;
@@ -86,7 +87,8 @@ class TemporaryUpload {
 
 }
 
-std::expected<std::string, UploadError> Uploads::save(std::string_view bytes) const {
+std::expected<std::string, UploadError>
+Uploads::save(std::string_view bytes) const {
     if (bytes.empty())
         return std::unexpected(UploadError::empty);
     if (bytes.size() > maximum_bytes_)
@@ -105,10 +107,11 @@ std::expected<std::string, UploadError> Uploads::save(std::string_view bytes) co
     throw std::runtime_error("could not allocate a unique upload name");
 }
 
-std::optional<std::pair<std::filesystem::path, UploadType>> Uploads::find(
-    std::string_view name) const {
+std::optional<std::pair<std::filesystem::path, UploadType>>
+Uploads::find(std::string_view name) const {
     if (name.size() < 34 || name[32] != '.' ||
-        name.substr(0, 32).find_first_not_of("0123456789abcdef") != std::string_view::npos) {
+        name.substr(0, 32).find_first_not_of("0123456789abcdef") !=
+            std::string_view::npos) {
         return std::nullopt;
     }
 
@@ -116,7 +119,8 @@ std::optional<std::pair<std::filesystem::path, UploadType>> Uploads::find(
     for (const auto type : {pdf, png, jpeg, gif, webp}) {
         if (extension == type.extension) {
             auto path = directory_ / name;
-            if (std::filesystem::is_regular_file(std::filesystem::symlink_status(path))) {
+            if (std::filesystem::is_regular_file(
+                    std::filesystem::symlink_status(path))) {
                 return std::pair{std::move(path), type};
             }
         }
