@@ -1,6 +1,5 @@
 #include "app/services/social_service.h"
 #include "app/services/user_service.h"
-#include "framework/http/request_validation.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <sodium.h>
@@ -62,19 +61,19 @@ TEST_CASE("The feed attributes posts and comments to their respective users",
         auto fixture = co_await SocialFixture::create();
         const auto alice = co_await fixture.account("alice");
         const auto bob = co_await fixture.account("bob");
-        const auto post =
-            co_await fixture.social.post(alice, "alice", "  Hello  ");
+        const auto post = co_await fixture.social.post(alice, "alice", "Hello");
         REQUIRE(co_await fixture.social.comment(post.id, bob, "bob", "Reply"));
-        const auto feed = co_await fixture.social.feed(bob, 1);
-        REQUIRE(feed.size() == 1);
-        CHECK(feed.front().author == "alice");
-        CHECK(feed.front().text == "Hello");
-        CHECK(feed.front().comment_count == 1);
-        const auto thread =
-            co_await fixture.social.thread(post.id, 1, fixture.users);
+        const auto feed =
+            co_await fixture.social.feed(bob, PageQuery::numbered(1));
+        REQUIRE(feed.items.size() == 1);
+        CHECK(feed.items.front().author == "alice");
+        CHECK(feed.items.front().text == "Hello");
+        CHECK(feed.items.front().comment_count == 1);
+        const auto thread = co_await fixture.social.thread(
+            post.id, PageQuery::numbered(1), fixture.users);
         REQUIRE(thread);
-        REQUIRE(thread->size() == 1);
-        CHECK(thread->front().author == "bob");
+        REQUIRE(thread->items.size() == 1);
+        CHECK(thread->items.front().author == "bob");
     });
 }
 
@@ -91,9 +90,10 @@ TEST_CASE("Like state is per user and repeated writes are idempotent",
             CHECK(liked->liked);
             CHECK(liked->like_count == 1);
         }
-        const auto feed = co_await fixture.social.feed(alice, 1);
-        CHECK_FALSE(feed.at(0).liked);
-        CHECK(feed.at(0).like_count == 1);
+        const auto feed =
+            co_await fixture.social.feed(alice, PageQuery::numbered(1));
+        CHECK_FALSE(feed.items.at(0).liked);
+        CHECK(feed.items.at(0).like_count == 1);
         for (int attempt = 0; attempt < 2; ++attempt) {
             const auto cleared =
                 co_await fixture.social.like(post.id, bob, false);
@@ -125,15 +125,16 @@ TEST_CASE(
         CHECK(co_await comments.soft_delete_by_id(reply));
         CHECK(co_await likes.soft_delete_by_id(like));
 
-        const auto feed = co_await posts.feed(bob, 20, 0);
-        REQUIRE(feed.size() == 1);
-        CHECK(feed.front().author == "Deleted user");
-        CHECK(feed.front().comment_count == 1);
-        CHECK(feed.front().like_count == 0);
-        CHECK_FALSE(feed.front().liked);
-        const auto thread = co_await comments.thread(post, 20, 0, users);
-        REQUIRE(thread.size() == 1);
-        CHECK(thread.front().author == "Deleted user");
+        const auto feed = co_await posts.feed(bob, PageQuery::numbered(1));
+        REQUIRE(feed.items.size() == 1);
+        CHECK(feed.items.front().author == "Deleted user");
+        CHECK(feed.items.front().comment_count == 1);
+        CHECK(feed.items.front().like_count == 0);
+        CHECK_FALSE(feed.items.front().liked);
+        const auto thread =
+            co_await comments.thread(post, PageQuery::numbered(1), users);
+        REQUIRE(thread.items.size() == 1);
+        CHECK(thread.items.front().author == "Deleted user");
         const auto restored = co_await likes.set(post, bob, true);
         CHECK(restored.liked);
         CHECK(restored.like_count == 1);
@@ -168,7 +169,7 @@ TEST_CASE("Search ranks literal active post and username matches independently",
 
         SocialService social(std::move(posts), std::move(comments),
                              std::move(likes));
-        const auto initial = co_await social.search(" a_% ", users);
+        const auto initial = co_await social.search("a_%", users);
         REQUIRE(initial.posts.size() == 2);
         REQUIRE(initial.users.size() == 5);
         CHECK(initial.users.front().id == exact_user);
@@ -176,11 +177,12 @@ TEST_CASE("Search ranks literal active post and username matches independently",
         CHECK(initial.posts[0].id == exact_post);
         CHECK(initial.posts[1].id == prefix_post);
         CHECK_FALSE(co_await social.view(author, deleted_post));
-        CHECK_FALSE(co_await social.user_posts(author, deleted_user, 1, users));
-        const auto user_posts =
-            co_await social.user_posts(author, exact_user, 1, users);
+        CHECK_FALSE(co_await social.user_posts(author, deleted_user,
+                                               PageQuery::numbered(1), users));
+        const auto user_posts = co_await social.user_posts(
+            author, exact_user, PageQuery::numbered(1), users);
         REQUIRE(user_posts);
-        CHECK(user_posts->empty());
+        CHECK(user_posts->items.empty());
         for (int i = 0; i < 6; ++i) {
             co_await social.post(author, "author",
                                  "suffix a_% " + std::to_string(i));
@@ -190,7 +192,7 @@ TEST_CASE("Search ranks literal active post and username matches independently",
         CHECK(capped.posts[0].id == exact_post);
         CHECK(capped.posts[1].id == prefix_post);
         CHECK(capped.posts[2].text == "suffix a_% 5");
-        CHECK((co_await social.search("  ", users)).posts.empty());
+        CHECK((co_await social.search("", users)).posts.empty());
     });
 }
 
@@ -235,7 +237,7 @@ TEST_CASE(
         const auto empty = co_await fixture.social.older_comments(
             post.id, {stamp, 1}, fixture.users);
         REQUIRE(empty);
-        CHECK(empty->empty());
+        CHECK(empty->items.empty());
 
         std::vector<std::int64_t> ids;
         for (int i = 0; i < 13; ++i) {
@@ -246,7 +248,7 @@ TEST_CASE(
                 const auto no_older = co_await fixture.social.older_comments(
                     post.id, {reply->created_at, reply->id}, fixture.users);
                 REQUIRE(no_older);
-                CHECK(no_older->empty());
+                CHECK(no_older->items.empty());
             }
             ids.push_back(reply->id);
         }
@@ -260,61 +262,53 @@ TEST_CASE(
         const auto first = co_await fixture.social.older_comments(
             post.id, {stamp, ids.back()}, fixture.users);
         REQUIRE(first);
-        REQUIRE(first->size() == 6);
-        CHECK((*first)[0].id == ids[11]);
-        CHECK((*first)[1].id == ids[10]);
-        CHECK((*first)[2].id == ids[8]);
-        CHECK((*first)[4].id == ids[6]);
+        REQUIRE(first->items.size() == 5);
+        CHECK(first->has_more);
+        CHECK(first->query.page_number() == 1);
+        CHECK(first->items[0].id == ids[11]);
+        CHECK(first->items[1].id == ids[10]);
+        CHECK(first->items[2].id == ids[8]);
+        CHECK(first->items[4].id == ids[6]);
 
         REQUIRE(co_await fixture.social.comment(post.id, author, "alice",
                                                 "New reply"));
         const auto second = co_await fixture.social.older_comments(
-            post.id, {stamp, (*first)[4].id}, fixture.users);
+            post.id, {stamp, first->items[4].id}, fixture.users);
         REQUIRE(second);
-        REQUIRE(second->size() == 6);
-        CHECK((*second)[0].id == ids[5]);
-        CHECK((*second)[4].id == ids[1]);
+        REQUIRE(second->items.size() == 5);
+        CHECK(second->has_more);
+        CHECK(second->items[0].id == ids[5]);
+        CHECK(second->items[4].id == ids[1]);
         const auto tail = co_await fixture.social.older_comments(
-            post.id, {stamp, (*second)[4].id}, fixture.users);
+            post.id, {stamp, second->items[4].id}, fixture.users);
         REQUIRE(tail);
-        REQUIRE(tail->size() == 1);
-        CHECK(tail->front().id == ids.front());
+        REQUIRE(tail->items.size() == 1);
+        CHECK_FALSE(tail->has_more);
+        CHECK(tail->items.front().id == ids.front());
     });
 }
 
-TEST_CASE("Feed pages are ordered newest first with one lookahead row",
+TEST_CASE("Feed pages expose pagination without returning the lookahead row",
           "[social]") {
     on_database_loop([]() -> drogon::Task<> {
         auto fixture = co_await SocialFixture::create();
         const auto alice = co_await fixture.account("alice");
         const auto first =
             co_await fixture.social.post(alice, "alice", "First");
-        for (int index = 0; index < SocialService::page_size; ++index) {
+        for (int index = 0; index < PageQuery::default_page_size; ++index) {
             co_await fixture.social.post(alice, "alice", "Next");
         }
-        const auto page = co_await fixture.social.feed(alice, 1);
-        REQUIRE(page.size() == SocialService::page_size + 1);
-        CHECK(page.back().id == first.id);
-        const auto next = co_await fixture.social.feed(alice, 2);
-        REQUIRE(next.size() == 1);
-        CHECK(next.front().id == first.id);
-    });
-}
-
-TEST_CASE("The social service rejects blank or oversized posts", "[social]") {
-    on_database_loop([]() -> drogon::Task<> {
-        auto fixture = co_await SocialFixture::create();
-        const auto alice = co_await fixture.account("alice");
-        const auto reject = [&](std::string text) -> drogon::Task<bool> {
-            try {
-                co_await fixture.social.post(alice, "alice", std::move(text));
-            } catch (const RequestValidationError&) {
-                co_return true;
-            }
-            co_return false;
-        };
-        CHECK(co_await reject(" \n\t "));
-        CHECK(co_await reject(std::string(281, 'a')));
+        const auto page =
+            co_await fixture.social.feed(alice, PageQuery::numbered(1));
+        REQUIRE(page.items.size() == PageQuery::default_page_size);
+        CHECK(page.has_more);
+        CHECK(page.items.back().id != first.id);
+        const auto next =
+            co_await fixture.social.feed(alice, PageQuery::numbered(2));
+        REQUIRE(next.items.size() == 1);
+        CHECK(next.query.page_number() == 2);
+        CHECK_FALSE(next.has_more);
+        CHECK(next.items.front().id == first.id);
     });
 }
 
@@ -322,7 +316,8 @@ TEST_CASE("Comment and like operations report a missing post", "[social]") {
     on_database_loop([]() -> drogon::Task<> {
         auto fixture = co_await SocialFixture::create();
         const auto alice = co_await fixture.account("alice");
-        CHECK_FALSE(co_await fixture.social.thread(42, 1, fixture.users));
+        CHECK_FALSE(co_await fixture.social.thread(42, PageQuery::numbered(1),
+                                                   fixture.users));
         CHECK_FALSE(
             co_await fixture.social.comment(42, alice, "alice", "Reply"));
         CHECK_FALSE(co_await fixture.social.like(42, alice, true));

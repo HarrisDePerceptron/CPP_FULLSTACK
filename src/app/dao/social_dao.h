@@ -14,11 +14,11 @@ class UserDao;
 class SocialPostDao final : public BaseDao<SocialPostDao, SocialPost> {
   public:
     static drogon::Task<SocialPostDao> init(DatabaseBackendPtr database);
-    drogon::Task<std::vector<PostView>>
-    feed(std::int64_t user, std::int64_t limit, std::int64_t offset,
+    drogon::Task<PagedResult<PostView>>
+    feed(std::int64_t user, PageQuery page,
          std::optional<std::int64_t> author = {}) const&;
-    drogon::Task<std::vector<PostView>>
-    feed(std::int64_t user, std::int64_t limit, std::int64_t offset,
+    drogon::Task<PagedResult<PostView>>
+    feed(std::int64_t user, PageQuery page,
          std::optional<std::int64_t> author = {}) const&& = delete;
     drogon::Task<std::optional<PostView>> view(std::int64_t user,
                                                std::int64_t post) const&;
@@ -38,19 +38,17 @@ class SocialPostDao final : public BaseDao<SocialPostDao, SocialPost> {
 class SocialCommentDao final : public BaseDao<SocialCommentDao, SocialComment> {
   public:
     static drogon::Task<SocialCommentDao> init(DatabaseBackendPtr database);
-    drogon::Task<std::vector<CommentView>> thread(std::int64_t post,
-                                                  std::int64_t limit,
-                                                  std::int64_t offset,
-                                                  const UserDao& users) const&;
-    drogon::Task<std::vector<CommentView>>
-    thread(std::int64_t post, std::int64_t limit, std::int64_t offset,
+    drogon::Task<PagedResult<CommentView>>
+    thread(std::int64_t post, PageQuery page, const UserDao& users) const&;
+    drogon::Task<PagedResult<CommentView>>
+    thread(std::int64_t post, PageQuery page,
            const UserDao& users) const&& = delete;
-    drogon::Task<std::vector<CommentView>>
+    drogon::Task<PagedResult<CommentView>>
     older(std::int64_t post, DaoDateTime before_time, std::int64_t before_id,
-          std::int64_t limit, const UserDao& users) const&;
-    drogon::Task<std::vector<CommentView>>
+          PageQuery page, const UserDao& users) const&;
+    drogon::Task<PagedResult<CommentView>>
     older(std::int64_t post, DaoDateTime before_time, std::int64_t before_id,
-          std::int64_t limit, const UserDao& users) const&& = delete;
+          PageQuery page, const UserDao& users) const&& = delete;
 
   private:
     using BaseDao::BaseDao;

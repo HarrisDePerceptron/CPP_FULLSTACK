@@ -195,8 +195,8 @@ drogon::Task<> databaseExample() {
         .where<&TaskRecord::project_id>(website_id)
         .collect();
 
-    if (!page.empty()) {
-        auto& task = page.front();
+    if (!page.items.empty()) {
+        auto& task = page.items.front();
         if (task.is_loaded<&TaskRecord::note>() && task.note) {
             std::println("Note: {}", *task.note);
         }
@@ -235,7 +235,7 @@ drogon::Task<> databaseExample() {
 | --- | --- |
 | `init(database)` | Creates or validates the table and applies supported additive schema upgrades. |
 | `create(record)` | Inserts a row and returns its primary key. Leave generated IDs empty on insert. |
-| `find().collect()` | Defaults to 100 rows at offset 0. Returns the key and required fields, sorted by newest update when timestamps are enabled and by primary key otherwise. Use `.select<...>()` or `.select_all()` for nullable fields, and `.order_by<Member>(SortDirection::desc)` for descending order. |
+| `find().collect()` | Returns `PagedResult<Record>` with `.items`, `.query`, and `.has_more`. Defaults to 100 rows at offset 0. Returns the key and required fields, sorted by newest update when timestamps are enabled and by primary key otherwise. Use `.select<...>()` or `.select_all()` for nullable fields, and `.order_by<Member>(SortDirection::desc)` for descending order. |
 | `find_by_id(id).collect()` | Returns an optional full record. Chain `.with_foreign<Member>(target_dao)` to load selected related records. |
 | `update(record)` | Updates by primary key and preserves fields that the query omitted. A loaded nullable field set to `std::nullopt` clears the value. |
 | `update_by_id(id).set<Member>(value).execute()` | Updates only assigned fields. Use `std::nullopt` to clear a nullable field. Returns false for missing and soft-deleted rows. |
@@ -294,6 +294,11 @@ The DAO loads targets in batches for each selected field. Access a loaded
 target through `record()` on its foreign field. Null keys and missing targets
 leave `record()` empty. Use `find(tx)` to read the page and its targets in
 the same transaction. Finish the builder with `.collect()` and await the result.
+
+Use `.page(PageQuery::numbered(2, 20))` to request page 2 of a numbered list.
+`.limit()` and `.offset()` also support raw query windows. For an unaligned
+offset, `page.query.page_number()` is empty. Use `std::move(page).map(mapper)` to
+convert each item while keeping the paging metadata.
 
 ### Soft-delete and restore records
 
@@ -402,7 +407,7 @@ optional public `void validate() const`.
 
 - **Drogon** for HTTP routing, async outbound requests, and server-rendered views
 - **SQLite, libsodium, and jwt-cpp** for account storage, password hashing, and signed sessions
-- **simdjson and Glaze** for JSON handling
+- **Glaze** for JSON handling
 - **Tailwind CSS** for styling and **Catch2** for tests
 
 ## Development rules
@@ -464,7 +469,14 @@ List requests use one-based `page` and `per_page` (default 20, maximum 100).
 `has_more` comes from fetching one extra matching row. Responses have no total
 count. Single-item and empty DELETE responses use page and page size 1.
 
-Use `api_ok(*request, item)` for success and
+Use `read_page(*request)` at the service call for fixed-size pages of 20, or
+`read_page(*request, 100)` to allow a client-supplied `per_page` of up to 100.
+Pass the query to the DAO's `.page()` builder. Return
+`api_ok(*request, std::move(result))` with a `PagedResult<T>` for list responses.
+`api_ok` reads the result's pagination automatically. A raw window must align
+with a numbered page before it can be returned in an API response.
+
+Use `api_ok(*request, item)` for single-record success and
 `api_error(*request, status, code, message)` for explicit errors. Errors include
 `success: false`, a structured `error`, and request metadata. Throw
 `RequestValidationError(message, fields)` to automatically return

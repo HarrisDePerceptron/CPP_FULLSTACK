@@ -3,6 +3,7 @@
 #include "database_backend.h"
 #include "dao_record.h"
 #include "dao_predicate.h"
+#include "framework/support/pagination.h"
 #include "row_to_struct.h"
 
 #include <drogon/orm/DbClient.h>
@@ -576,7 +577,7 @@ class BaseDao {
                       detail::ForeignSelection<member, Dao> selection);
 
     template <typename... Modifiers>
-    drogon::Task<std::vector<Record>>
+    drogon::Task<PagedResult<Record>>
     find_page(TransactionScope tx, std::int64_t limit, std::int64_t offset,
               Modifiers... modifiers) const;
 

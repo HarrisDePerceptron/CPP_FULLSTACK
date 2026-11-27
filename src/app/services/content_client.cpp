@@ -1,12 +1,20 @@
 #include "app_namespace.h"
 #include "content_client.h"
+#include "framework/support/validation.h"
 
 #include <drogon/HttpClient.h>
-#include <simdjson.h>
+#include <glaze/glaze.hpp>
 
+#include <charconv>
 #include <cstdlib>
 
 namespace APP_NAMESPACE {
+
+struct UpstreamContent {
+    glz::raw_json_view id;
+    std::string title;
+    bool completed;
+};
 
 drogon::Task<std::expected<Content, ContentError>>
 fetch_content(std::string origin, std::string path,
@@ -41,17 +49,23 @@ fetch_content(std::string origin, std::string path,
         co_return std::unexpected(ContentError::upstream);
     }
 
-    simdjson::dom::parser parser;
-    const simdjson::padded_string padded(body);
-    simdjson::dom::element json;
-    Content content{};
-    std::string_view title;
-    if (parser.parse(padded).get(json) || json["id"].get(content.id) ||
-        json["title"].get(title) || json["completed"].get(content.completed)) {
+    constexpr glz::opts options{.error_on_unknown_keys = false,
+                                .error_on_missing_keys = true};
+    UpstreamContent content{};
+    if (!utf8_code_point_count(body) || glz::validate_json(body) ||
+        glz::read<options>(content, body)) {
         co_return std::unexpected(ContentError::upstream);
     }
-    content.title = title;
-    co_return content;
+
+    const auto id_text = trim_ascii_whitespace(content.id.str);
+    if (id_text.empty())
+        co_return std::unexpected(ContentError::upstream);
+    std::int64_t id{};
+    const auto end = id_text.data() + id_text.size();
+    const auto [next, error] = std::from_chars(id_text.data(), end, id);
+    if (error != std::errc{} || next != end)
+        co_return std::unexpected(ContentError::upstream);
+    co_return Content{id, std::move(content.title), content.completed};
 }
 
 }

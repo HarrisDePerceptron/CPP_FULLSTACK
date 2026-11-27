@@ -2,6 +2,7 @@
 
 #include "app_namespace.h"
 #include "framework/support/random.h"
+#include "framework/support/pagination.h"
 #include "request_validation.h"
 
 #include <drogon/HttpRequest.h>
@@ -84,24 +85,40 @@ drogon::HttpResponsePtr serialize_api(const ApiResponse<T>& payload,
 
 template <typename T>
 drogon::HttpResponsePtr api_ok(const drogon::HttpRequest& request,
-                               std::vector<T> items, ApiPagination pagination,
+                               PagedResult<T> result,
                                drogon::HttpStatusCode status = drogon::k200OK) {
+    const auto page = result.query.page_number();
+    if (!page)
+        throw std::invalid_argument("API pagination requires a numbered page");
+    const ApiPagination pagination{*page, result.query.limit(),
+                                   result.has_more};
     return serialize_api(
         ApiResponse<T>{
-            true, std::move(items), {}, api_meta(request, pagination)},
+            true, std::move(result.items), {}, api_meta(request, pagination)},
         status);
 }
+
+template <typename T, typename Allocator>
+drogon::HttpResponsePtr
+api_ok(const drogon::HttpRequest&, std::vector<T, Allocator>,
+       drogon::HttpStatusCode = drogon::k200OK) = delete;
 
 template <typename T>
 drogon::HttpResponsePtr api_ok(const drogon::HttpRequest& request, T item,
                                drogon::HttpStatusCode status = drogon::k200OK) {
     std::vector<T> items;
     items.push_back(std::move(item));
-    return api_ok(request, std::move(items), {}, status);
+    return serialize_api(
+        ApiResponse<T>{
+            true, std::move(items), {}, api_meta(request, ApiPagination{})},
+        status);
 }
 
 inline drogon::HttpResponsePtr api_ok(const drogon::HttpRequest& request) {
-    return api_ok(request, std::vector<int>{}, ApiPagination{});
+    return serialize_api(
+        ApiResponse<int>{
+            true, std::vector<int>{}, {}, api_meta(request, ApiPagination{})},
+        drogon::k200OK);
 }
 
 inline drogon::HttpResponsePtr api_error(const drogon::HttpRequest& request,

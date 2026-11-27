@@ -9,11 +9,6 @@ namespace APP_NAMESPACE {
 
 using CrudValidationError = RequestValidationError;
 
-struct CrudPage {
-    std::int64_t limit = 100;
-    std::int64_t offset = 0;
-};
-
 template <typename Dao, typename Resource> class CrudService {
   public:
     using Policy = Resource;
@@ -27,18 +22,14 @@ template <typename Dao, typename Resource> class CrudService {
     explicit CrudService(Dao dao) : dao_(std::move(dao)) {}
     virtual ~CrudService() = default;
 
-    virtual drogon::Task<std::vector<Response>> list(CrudPage page,
+    virtual drogon::Task<PagedResult<Response>> list(PageQuery page,
                                                      Filters filters) const {
-        const auto rows = co_await dao_.find()
-                              .limit(page.limit)
-                              .offset(page.offset)
-                              .matching(std::move(filters))
-                              .collect();
-        std::vector<Response> result;
-        result.reserve(rows.size());
-        for (const auto& row : rows)
-            result.push_back(Resource::to_response(row));
-        co_return result;
+        auto rows = co_await dao_.find()
+                        .page(page)
+                        .matching(std::move(filters))
+                        .collect();
+        co_return std::move(rows).map(
+            [](const Record& row) { return Resource::to_response(row); });
     }
 
     virtual drogon::Task<std::optional<Response>> get(Id id) const {

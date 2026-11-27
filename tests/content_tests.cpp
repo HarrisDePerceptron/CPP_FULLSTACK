@@ -116,7 +116,8 @@ fetch_local_content(const LocalResponse& fixture,
 TEST_CASE("The content client fetches and validates JSON over HTTP",
           "[content]") {
     const LocalResponse fixture(
-        "200 OK", R"({"id":1,"title":"Test todo","completed":false})");
+        "200 OK",
+        R"({"userId":2,"id": 1 ,"title":"Test todo","completed":false})");
     const auto content = fetch_local_content(fixture);
     REQUIRE(content.has_value());
     CHECK(content->id == 1);
@@ -131,8 +132,30 @@ TEST_CASE("Upstream HTTP and JSON errors, oversized replies, and timeouts are "
         const LocalResponse fixture("503 Unavailable", "{}");
         CHECK(fetch_local_content(fixture).error() == ContentError::upstream);
     }
-    SECTION("Bad JSON or missing fields") {
-        const LocalResponse fixture("200 OK", R"({"title":true})");
+    SECTION("Missing field") {
+        const LocalResponse fixture("200 OK",
+                                    R"({"id":1,"title":"Test todo"})");
+        CHECK(fetch_local_content(fixture).error() == ContentError::upstream);
+    }
+    SECTION("Wrong field type") {
+        const LocalResponse fixture(
+            "200 OK", R"({"id":1,"title":true,"completed":false})");
+        CHECK(fetch_local_content(fixture).error() == ContentError::upstream);
+    }
+    SECTION("Exponent-form ID") {
+        const LocalResponse fixture(
+            "200 OK", R"({"id":1e2,"title":"Test todo","completed":false})");
+        CHECK(fetch_local_content(fixture).error() == ContentError::upstream);
+    }
+    SECTION("Malformed JSON") {
+        const LocalResponse fixture(
+            "200 OK", R"({"id":1,"title":"Test todo","completed":false}[])");
+        CHECK(fetch_local_content(fixture).error() == ContentError::upstream);
+    }
+    SECTION("Malformed UTF-8") {
+        const LocalResponse fixture(
+            "200 OK",
+            "{\"id\":1,\"title\":\"\xed\xa0\x80\",\"completed\":false}");
         CHECK(fetch_local_content(fixture).error() == ContentError::upstream);
     }
     SECTION("Oversized response") {

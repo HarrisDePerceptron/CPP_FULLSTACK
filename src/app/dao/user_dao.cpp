@@ -15,9 +15,9 @@ UserDao::find_by_username(std::string username) const& {
                     .select_all()
                     .where<&UserRecord::username>(std::move(username))
                     .collect();
-    if (rows.empty())
+    if (rows.items.empty())
         co_return std::nullopt;
-    co_return std::move(rows.front());
+    co_return std::move(rows.items.front());
 }
 
 drogon::Task<std::vector<UserMatch>> UserDao::search(std::string query) const& {

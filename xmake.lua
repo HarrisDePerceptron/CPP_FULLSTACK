@@ -13,7 +13,7 @@ end
 add_requires("drogon v1.9.12", { configs = { cpp20 = true, sqlite3 = true } })
 add_requires("glaze v7.0.2", "jwt-cpp 0.7.2")
 add_requires("magic_enum v0.9.8")
-add_requires("simdjson", "libsodium", "catch2 3.x")
+add_requires("libsodium", "catch2 3.x")
 
 option("app_namespace")
 set_default("App")
@@ -93,7 +93,6 @@ set_kind("static")
 add_files("src/app/**.cpp")
 add_deps("template_core", { public = true })
 add_deps("format_cpp")
-add_packages("simdjson", { public = true })
 
 rule("drogon.view")
 set_extensions(".csp")

@@ -93,6 +93,12 @@ class BaseDao<Derived, Record, options>::FindBuilder
         return std::move(*this);
     }
 
+    FindBuilder page(PageQuery query) && {
+        limit_ = query.limit();
+        offset_ = query.offset();
+        return std::move(*this);
+    }
+
     template <auto member, typename Value>
         requires requires(Value&& value) {
             APP_NAMESPACE::where<member>(std::forward<Value>(value));
@@ -143,7 +149,7 @@ class BaseDao<Derived, Record, options>::FindBuilder
         return std::move(*this).append(std::move(filters));
     }
 
-    drogon::Task<std::vector<Record>> collect() && {
+    drogon::Task<PagedResult<Record>> collect() && {
         return std::apply(
             [&](auto&&... modifiers) {
                 return dao_.find_page(tx_, limit_, offset_,

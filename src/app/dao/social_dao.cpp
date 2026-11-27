@@ -19,12 +19,13 @@ drogon::Task<SocialLikeDao> SocialLikeDao::init(DatabaseBackendPtr database) {
         SocialLikeDao(std::move(database)));
 }
 
-drogon::Task<std::vector<PostView>>
-SocialPostDao::feed(std::int64_t user, std::int64_t limit, std::int64_t offset,
+drogon::Task<PagedResult<PostView>>
+SocialPostDao::feed(std::int64_t user, PageQuery page,
                     std::optional<std::int64_t> author) const& {
-    co_return co_await read_views(user, limit, offset,
-                                  author ? " AND p.author_id = ?4" : "",
-                                  author.value_or(0));
+    auto rows = co_await this->read_views(
+        user, page.fetch_limit(), page.offset(),
+        author ? " AND p.author_id = ?4" : "", author.value_or(0));
+    co_return page.finish(std::move(rows));
 }
 
 drogon::Task<std::optional<PostView>>
@@ -100,42 +101,36 @@ SocialPostDao::search(std::string query) const& {
 
 namespace {
 
-std::vector<CommentView> comment_views(const std::vector<SocialComment>& rows) {
-    std::vector<CommentView> result;
-    result.reserve(rows.size());
-    for (const auto& row : rows) {
-        const auto& author = row.author_id.record();
-        result.push_back(
-            {row.id.value(), author ? author->username.value : "Deleted user",
-             row.text, detail::format_dao_date_time(row.created_at.value())});
-    }
-    return result;
+CommentView to_comment_view(SocialComment&& row) {
+    const auto& author = row.author_id.record();
+    return {row.id.value(), author ? author->username.value : "Deleted user",
+            std::move(row.text),
+            detail::format_dao_date_time(row.created_at.value())};
 }
 
 }
 
-drogon::Task<std::vector<CommentView>>
-SocialCommentDao::thread(std::int64_t post, std::int64_t limit,
-                         std::int64_t offset, const UserDao& users) const& {
-    const auto rows = co_await find()
-                          .limit(limit)
-                          .offset(offset)
-                          .select<&SocialComment::created_at>()
-                          .where<&SocialComment::post_id>(post)
-                          .order_by<&SocialComment::created_at>()
-                          .order_by<&SocialComment::id>()
-                          .with_foreign<&SocialComment::author_id>(users)
-                          .collect();
-    co_return comment_views(rows);
+drogon::Task<PagedResult<CommentView>>
+SocialCommentDao::thread(std::int64_t post, PageQuery page,
+                         const UserDao& users) const& {
+    auto rows = co_await this->find()
+                    .page(page)
+                    .select<&SocialComment::created_at>()
+                    .where<&SocialComment::post_id>(post)
+                    .order_by<&SocialComment::created_at>()
+                    .order_by<&SocialComment::id>()
+                    .with_foreign<&SocialComment::author_id>(users)
+                    .collect();
+    co_return std::move(rows).map(to_comment_view);
 }
 
-drogon::Task<std::vector<CommentView>>
+drogon::Task<PagedResult<CommentView>>
 SocialCommentDao::older(std::int64_t post, DaoDateTime before_time,
-                        std::int64_t before_id, std::int64_t limit,
+                        std::int64_t before_id, PageQuery page,
                         const UserDao& users) const& {
-    const auto rows =
-        co_await find()
-            .limit(limit)
+    auto rows =
+        co_await this->find()
+            .page(page)
             .select<&SocialComment::created_at>()
             .where<&SocialComment::post_id>(post)
             .where(where_tuple_less<&SocialComment::created_at,
@@ -144,7 +139,7 @@ SocialCommentDao::older(std::int64_t post, DaoDateTime before_time,
             .order_by<&SocialComment::id>(SortDirection::desc)
             .with_foreign<&SocialComment::author_id>(users)
             .collect();
-    co_return comment_views(rows);
+    co_return std::move(rows).map(to_comment_view);
 }
 
 drogon::Task<LikeView> SocialLikeDao::set(std::int64_t post, std::int64_t user,
@@ -158,12 +153,12 @@ drogon::Task<LikeView> SocialLikeDao::set(std::int64_t post, std::int64_t user,
                                   .where<&SocialLike::post_id>(post)
                                   .where<&SocialLike::user_id>(user)
                                   .collect();
-        if (liked && existing.empty()) {
+        if (liked && existing.items.empty()) {
             co_await create(tx, {{post, user}});
-        } else if (liked && existing.front().deleted_at) {
-            co_await restore_by_id(tx, existing.front().id.value());
-        } else if (!liked && !existing.empty()) {
-            co_await delete_by_id(tx, existing.front().id.value());
+        } else if (liked && existing.items.front().deleted_at) {
+            co_await restore_by_id(tx, existing.items.front().id.value());
+        } else if (!liked && !existing.items.empty()) {
+            co_await delete_by_id(tx, existing.items.front().id.value());
         }
         const auto total =
             co_await count(tx).where<&SocialLike::post_id>(post).collect();

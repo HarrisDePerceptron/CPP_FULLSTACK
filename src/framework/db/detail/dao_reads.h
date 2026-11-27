@@ -233,9 +233,8 @@ auto BaseDao<Derived, Record, options>::find_page(TransactionScope tx,
                                                   std::int64_t limit,
                                                   std::int64_t offset,
                                                   Modifiers... modifiers) const
-    -> drogon::Task<std::vector<Record>> {
-    if (limit <= 0 || offset < 0)
-        throw std::invalid_argument("invalid pagination");
+    -> drogon::Task<PagedResult<Record>> {
+    const auto page = PageQuery::window(limit, offset);
     const auto foreign = std::tuple_cat(foreign_selection(modifiers)...);
     const auto same_backend = std::apply(
         [&](const auto&... selections) {
@@ -299,7 +298,7 @@ auto BaseDao<Derived, Record, options>::find_page(TransactionScope tx,
     }
     sql += " ORDER BY " + ordering + " LIMIT " + parameter(values.size() + 1) +
            " OFFSET " + parameter(values.size() + 2);
-    values.emplace_back(limit);
+    values.emplace_back(page.fetch_limit());
     values.emplace_back(offset);
     const auto rows =
         co_await execute_bound(tx, std::move(sql), std::move(values));
@@ -308,13 +307,14 @@ auto BaseDao<Derived, Record, options>::find_page(TransactionScope tx,
     records.reserve(rows.size());
     for (const auto& row : rows)
         records.push_back(map_row(row, omitted));
+    auto result = page.finish(std::move(records));
     if constexpr (std::tuple_size_v<decltype(foreign)> > 0) {
         const auto load = [&](const auto&... selections) -> drogon::Task<> {
-            (co_await load_foreign_page(tx, records, selections), ...);
+            (co_await load_foreign_page(tx, result.items, selections), ...);
         };
         co_await std::apply(load, foreign);
     }
-    co_return records;
+    co_return result;
 }
 
 template <typename Derived, typename Record, DaoOptions options>

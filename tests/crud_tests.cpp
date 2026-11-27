@@ -1,3 +1,6 @@
+#include "app/server/routes.h"
+#include "app/server/services.h"
+#include "framework/auth/jwt_middleware.h"
 #include "framework/db/base_dao.h"
 #include "framework/crud/crud_router.h"
 #include "framework/http/server_hooks.h"
@@ -9,6 +12,7 @@
 #include <future>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <sodium.h>
 #include <unistd.h>
 
 using namespace APP_NAMESPACE;
@@ -232,6 +236,7 @@ class CrudServer {
                                                  .patch = false,
                                                  .remove = false}));
                 }
+                this->mount_social(server);
                 server.registerBeginningAdvice([ready] { ready->set_value(); });
                 server.run();
             } catch (...) {
@@ -250,16 +255,45 @@ class CrudServer {
         return "http://127.0.0.1:" + std::to_string(port_);
     }
 
+    const std::string& social_token() const { return social_token_; }
+
   private:
+    void mount_social(drogon::HttpAppFramework& server) {
+        if (sodium_init() < 0)
+            throw std::runtime_error("Could not initialize libsodium");
+        auto database = drogon::sync_wait(open_sqlite_database(":memory:"));
+        auto users = drogon::sync_wait(UserDao::init(database));
+        auto posts = drogon::sync_wait(SocialPostDao::init(database));
+        auto comments = drogon::sync_wait(SocialCommentDao::init(database));
+        auto likes = drogon::sync_wait(SocialLikeDao::init(database));
+        constexpr auto username = "social-fixture";
+        drogon::sync_wait(users.create({{username, "unused"}}));
+        auto services = std::make_shared<Services>(
+            ResolvedServerConfig{}, Config{.jwt_lifetime_seconds = 1800},
+            Logger(LogLevel::error), std::string(32, 'x'),
+            UserService(std::move(users)),
+            SocialService(std::move(posts), std::move(comments),
+                          std::move(likes)));
+        social_token_ = services->tokens.issue(username);
+        const auto jwt =
+            register_jwt_middleware(server, {services, &services->tokens});
+        register_social_routes(server, services, jwt, "/public/");
+    }
+
     unsigned short port_;
+    std::string social_token_;
     std::future<void> server_;
 };
 
 class CrudClient {
   public:
-    explicit CrudClient(std::string prefix)
-        : prefix_(std::move(prefix)),
+    explicit CrudClient(std::string prefix, std::string bearer = {})
+        : prefix_(std::move(prefix)), bearer_(std::move(bearer)),
           client_(drogon::HttpClient::newHttpClient(server().base_url())) {}
+
+    static CrudClient social() {
+        return CrudClient("", server().social_token());
+    }
 
     drogon::HttpResponsePtr get(const std::string& path) const {
         return send(drogon::Get, path);
@@ -287,6 +321,8 @@ class CrudClient {
         request->setMethod(method);
         request->setPath(prefix_ + path);
         request->setPathEncode(false);
+        if (!bearer_.empty())
+            request->addHeader("Authorization", "Bearer " + bearer_);
         if (method == drogon::Post || method == drogon::Patch) {
             request->setContentTypeCode(drogon::CT_APPLICATION_JSON);
             request->setBody(body);
@@ -302,6 +338,7 @@ class CrudClient {
     }
 
     std::string prefix_;
+    std::string bearer_;
     drogon::HttpClientPtr client_;
 };
 
@@ -333,6 +370,71 @@ TEST_CASE("The exception hook returns a generic 500 for unexpected errors",
     const auto json = response->getJsonObject();
     CHECK((*json)["error"]["code"].asString() == "INTERNAL_ERROR");
     CHECK((*json)["error"]["message"].asString() == "Internal server error.");
+}
+
+TEST_CASE("Social routes trim submitted text and enforce Unicode limits",
+          "[http][social]") {
+    using namespace crud_test;
+    const auto client = CrudClient::social();
+    constexpr auto emoji = "\xf0\x9f\x98\x80";
+    std::string text;
+    for (int index = 0; index < 280; ++index)
+        text += emoji;
+
+    const auto post = check_reply(
+        client.post("/api/posts", "{\"text\":\"  " + text + "  \"}"), 201);
+    REQUIRE(post.size() == 1);
+    CHECK(post[0]["text"].asString() == text);
+    const auto comments =
+        "/api/posts/" + std::to_string(post[0]["id"].asInt64()) + "/comments";
+    check_reply(
+        client.post("/api/posts", "{\"text\":\"" + text + emoji + "\"}"), 400);
+
+    for (int index = 280; index < 500; ++index)
+        text += emoji;
+    const auto reply = check_reply(
+        client.post(comments, "{\"text\":\"  " + text + "  \"}"), 201);
+    REQUIRE(reply.size() == 1);
+    CHECK(reply[0]["text"].asString() == text);
+    check_reply(client.post(comments, "{\"text\":\"" + text + emoji + "\"}"),
+                400);
+    check_reply(client.post(comments, R"({"text":"   "})"), 400);
+}
+
+TEST_CASE("Post creation rejects blank text, NULs, and malformed UTF-8",
+          "[http][social]") {
+    using namespace crud_test;
+    const auto client = CrudClient::social();
+    for (const auto body : {R"({"text":" \n\t "})", R"({"text":"a\u0000b"})",
+                            "{\"text\":\"\xed\xa0\x80\"}"}) {
+        const auto response = client.post("/api/posts", body);
+        check_reply(response, 400);
+        CHECK((*response->getJsonObject())["error"]["code"].asString() ==
+              "VALIDATION_FAILED");
+    }
+}
+
+TEST_CASE("Social search trims text and accepts empty searches",
+          "[http][social]") {
+    using namespace crud_test;
+    const auto client = CrudClient::social();
+    const auto blank = check_reply(client.get("/api/search?q=%20%09"), 200);
+    REQUIRE(blank.size() == 1);
+    CHECK(blank[0]["posts"].empty());
+    CHECK(blank[0]["users"].empty());
+    const auto matches =
+        check_reply(client.get("/api/search?q=%20social-fixture%20"), 200);
+    REQUIRE(matches.size() == 1);
+    REQUIRE(matches[0]["users"].size() == 1);
+    CHECK(matches[0]["users"][0]["username"].asString() == "social-fixture");
+
+    std::string query = "/api/search?q=";
+    for (int index = 0; index < 128; ++index)
+        query += "%F0%9F%98%80";
+    check_reply(client.get(query), 200);
+    check_reply(client.get(query + "%F0%9F%98%80"), 400);
+    check_reply(client.get("/api/search?q=%C0%AF"), 400);
+    check_reply(client.get("/api/search?q=a%00b"), 400);
 }
 
 TEST_CASE("CRUD routes create, read, filter, update and delete resources",

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "framework/http/json_response.h"
+#include "framework/http/pagination.h"
 #include "crud_service.h"
 
 #include <drogon/HttpAppFramework.h>
@@ -8,7 +9,6 @@
 
 #include <charconv>
 #include <concepts>
-#include <limits>
 
 namespace APP_NAMESPACE {
 
@@ -70,12 +70,12 @@ template <typename Service> class CrudRouter {
 
   protected:
     using Request = drogon::HttpRequest;
-    using Items = std::vector<Response>;
+    using Items = PagedResult<Response>;
 
     const Service& service() const { return *service_; }
 
     virtual drogon::Task<Items> list(const Request& request,
-                                     CrudPage page) const {
+                                     PageQuery page) const {
         typename Service::Filters filters;
         for (const auto& [name, value] : request.parameters()) {
             if (name != "page" && name != "per_page")
@@ -104,23 +104,6 @@ template <typename Service> class CrudRouter {
     }
 
   private:
-    static ApiPagination pagination(const Request& request) {
-        ApiPagination page{1, 20, false};
-        const auto& params = request.parameters();
-        if (const auto it = params.find("page"); it != params.end()) {
-            page.page = parse_crud_integer<std::int64_t>(it->second);
-        }
-        if (const auto it = params.find("per_page"); it != params.end()) {
-            page.per_page = parse_crud_integer<std::int64_t>(it->second);
-        }
-        if (page.page < 1 || page.per_page < 1 || page.per_page > 100 ||
-            page.page - 1 >
-                std::numeric_limits<std::int64_t>::max() / page.per_page) {
-            throw CrudValidationError("Invalid pagination.");
-        }
-        return page;
-    }
-
     static const Json::Value& object_body(const Request& request) {
         const auto& body = request.getJsonObject();
         if (!body || !body->isObject())
@@ -175,15 +158,9 @@ template <typename Service> class CrudRouter {
             const auto method = request->method();
             if (!id) {
                 if (method == Get && methods_.list) {
-                    auto page = pagination(*request);
-                    auto items = co_await list(
-                        *request,
-                        {page.per_page + 1, (page.page - 1) * page.per_page});
-                    const auto limit = static_cast<std::size_t>(page.per_page);
-                    page.has_more = items.size() > limit;
-                    if (page.has_more)
-                        items.erase(items.begin() + limit, items.end());
-                    co_return api_ok(*request, std::move(items), page);
+                    auto items =
+                        co_await this->list(*request, read_page(*request, 100));
+                    co_return api_ok(*request, std::move(items));
                 }
                 if (method == Post && methods_.create)
                     co_return api_ok(*request, co_await create(*request),
