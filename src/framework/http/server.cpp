@@ -1,6 +1,7 @@
 #include "server.h"
 
 #include "server_hooks.h"
+#include "server_runtime.h"
 #include "framework/auth/auth.h"
 #include "framework/support/validation.h"
 #include "framework/support/workers.h"
@@ -9,6 +10,7 @@
 #include <drogon/HttpAppFramework.h>
 #include <sodium.h>
 #include <trantor/net/EventLoop.h>
+#include <trantor/net/EventLoopThread.h>
 
 #include <algorithm>
 #include <atomic>
@@ -134,16 +136,16 @@ ResolvedServerConfig resolve_config(const fs::path& root,
 }
 
 void register_shutdown(drogon::HttpAppFramework& server,
-                       std::shared_ptr<Workers> workers) {
+                       std::weak_ptr<ServerRuntime> runtime) {
     auto stopping = std::make_shared<std::atomic_flag>();
     const auto request_stop = [stopping] { stopping->test_and_set(); };
     server.setTermSignalHandler(request_stop).setIntSignalHandler(request_stop);
     server.registerBeginningAdvice(
-        [&server, stopping, workers = std::move(workers)] {
-            server.getLoop()->runEvery(0.1, [&server, stopping, workers] {
+        [&server, stopping, runtime = std::move(runtime)] {
+            server.getLoop()->runEvery(0.1, [&server, stopping, runtime] {
                 if (stopping->test()) {
-                    if (workers)
-                        workers->stop();
+                    if (const auto running = runtime.lock())
+                        running->workers().stop();
                     server.quit();
                 }
             });
@@ -162,11 +164,14 @@ void ServerConfig::validate() const {
     require_positive_number(max_connections,
                             std::numeric_limits<std::size_t>::max(),
                             "max_connections");
+    require_positive_number(jwt_lifetime_seconds, 86400,
+                            "server.jwt_lifetime_seconds");
     parse_log_level(log_level);
 }
 
-int run_http_server(drogon::HttpAppFramework& server, const fs::path& root,
-                    const ServerConfig& config, const ServerSetup& setup) {
+int detail::run_http_server(drogon::HttpAppFramework& server,
+                            const fs::path& root, const ServerConfig& config,
+                            const ServerSetup& setup) {
     config.validate();
     const auto resolved = resolve_config(root, config);
     if (sodium_init() < 0)
@@ -189,6 +194,23 @@ int run_http_server(drogon::HttpAppFramework& server, const fs::path& root,
 
     const auto log_level = parse_log_level(config.log_level);
     const Logger log(log_level);
+    Tokens tokens(load_signing_key(),
+                  std::chrono::seconds(config.jwt_lifetime_seconds));
+    const auto [runtime, mount_routes] = [&] {
+        trantor::EventLoopThread startup_thread;
+        startup_thread.run();
+        using Startup = std::pair<std::shared_ptr<ServerRuntime>, MountRoutes>;
+        const auto initialize = [&]() -> drogon::Task<Startup> {
+            co_await drogon::switchThreadCoro(startup_thread.getLoop());
+            auto database =
+                co_await open_sqlite_database(resolved.database_path);
+            auto runtime = std::make_shared<ServerRuntime>(
+                resolved, std::move(database), log, std::move(tokens));
+            auto mount = co_await setup(runtime->database());
+            co_return Startup{std::move(runtime), std::move(mount)};
+        };
+        return drogon::sync_wait(initialize());
+    }();
     server
         .addListener(config.bind_address,
                      static_cast<std::uint16_t>(config.port))
@@ -204,15 +226,16 @@ int run_http_server(drogon::HttpAppFramework& server, const fs::path& root,
 
     register_access_logging(server, log_level, log, resolved.public_url_prefix);
     register_exception_handler(server, log);
-    auto [workers, tokens] = setup(server, resolved, log);
-    const detail::AuthVerifierScope auth_verifier(std::move(tokens));
+    mount_routes(server, *runtime);
+    const AuthVerifierScope auth_verifier({runtime, &runtime->tokens()});
     server.registerBeginningAdvice([log, address = config.bind_address,
                                     port = config.port] {
         log.write(LogLevel::info, "Listening on http://{}:{}", address, port);
         std::fflush(stdout);
     });
-    register_shutdown(server, std::move(workers));
+    register_shutdown(server, runtime);
     server.run();
+    runtime->workers().stop();
     return 0;
 }
 

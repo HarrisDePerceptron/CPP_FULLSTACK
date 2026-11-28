@@ -39,7 +39,7 @@ Credentials read_credentials(const HttpRequestPtr& request,
 }
 
 Task<HttpResponsePtr> signup(std::shared_ptr<Services> services,
-                             HttpRequestPtr request) {
+                             HttpRequestPtr request, Workers& workers) {
     auto credentials = read_credentials(request, 8192);
     const auto& name = credentials.username;
     if (name.size() < 3 || name.size() > 32 ||
@@ -51,8 +51,7 @@ Task<HttpResponsePtr> signup(std::shared_ptr<Services> services,
             "username, and at least 8 bytes for the password.");
     }
     Identity identity{name};
-    if (!co_await services->users.signup(std::move(credentials),
-                                         services->workers)) {
+    if (!co_await services->users.signup(std::move(credentials), workers)) {
         co_return api_error(*request, k409Conflict, "CONFLICT",
                             "That username is already taken.");
     }
@@ -60,10 +59,11 @@ Task<HttpResponsePtr> signup(std::shared_ptr<Services> services,
 }
 
 Task<HttpResponsePtr> login(std::shared_ptr<Services> services,
-                            HttpRequestPtr request) {
+                            HttpRequestPtr request, const Tokens& tokens,
+                            Workers& workers) {
     const auto credentials = read_credentials(request, 4096);
     const auto roles = co_await services->users.authenticate(
-        credentials.username, credentials.password, services->workers);
+        credentials.username, credentials.password, workers);
     if (!roles) {
         co_return api_error(*request, k401Unauthorized, "UNAUTHORIZED",
                             "Invalid username or password.");
@@ -73,8 +73,8 @@ Task<HttpResponsePtr> login(std::shared_ptr<Services> services,
     names.reserve(roles->size());
     for (const auto role : *roles)
         names.emplace_back(role_name(role));
-    const auto token = services->tokens.issue(credentials.username, names);
-    const auto lifetime = services->tokens.lifetime().count();
+    const auto token = tokens.issue(credentials.username, names);
+    const auto lifetime = tokens.lifetime().count();
     auto response = api_ok(*request, LoginResult{token, "Bearer", lifetime});
     response->addCookie(
         session_cookie(request, token, static_cast<int>(lifetime)));
@@ -98,17 +98,20 @@ Task<HttpResponsePtr> current_user(HttpRequestPtr request) {
 }
 
 void register_auth_routes(drogon::HttpAppFramework& server,
-                          const std::shared_ptr<Services>& services) {
+                          const std::shared_ptr<Services>& services,
+                          const Tokens& tokens, Workers& workers) {
     server.registerHandler("/api/signup",
-                           [services](HttpRequestPtr request) {
-                               return signup(services, std::move(request));
+                           [services, &workers](HttpRequestPtr request) {
+                               return signup(services, std::move(request),
+                                             workers);
                            },
                            {Post});
-    server.registerHandler("/api/login",
-                           [services](HttpRequestPtr request) {
-                               return login(services, std::move(request));
-                           },
-                           {Post});
+    server.registerHandler(
+        "/api/login",
+        [services, &tokens, &workers](HttpRequestPtr request) {
+            return login(services, std::move(request), tokens, workers);
+        },
+        {Post});
     server.registerHandler("/api/logout", &logout, {Post});
     server.registerHandler("/api/me", &current_user, {Get, Auth<>()});
 }

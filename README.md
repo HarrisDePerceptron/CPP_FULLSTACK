@@ -96,18 +96,21 @@ request and response DTOs in `src/app/server/dto/`. Use the public framework
 headers for persistence, CRUD, or HTTP responses. Wire the feature
 into the service container and route registration in `src/app/server/`.
 
-`src/app/server/server.h` contains `serve()` and its inline startup helpers
-for Drogon setup and lifecycle callbacks. Startup calls `register_app_routes()`
-in `src/app/server/routes.cpp` to register JWT middleware and mount the
-feature modules. Each module receives the Drogon server explicitly and lists
-its paths, methods, and middleware with `registerHandler()`. Put each HTTP
-method on its own route registration and keep the handler beside the route list.
-The framework provides separate HTTP hooks for access logging and exception handling.
+`src/app/server/server.h` contains `serve()`. It gives the framework an async
+app initializer and a route registration callback. The framework owns the
+startup event loop, opens SQLite once, and creates the tokens, uploads,
+logger, and workers. The app initializer uses the supplied database to build
+the domain services and seed the demo account.
+
+Route registration runs on the startup caller's thread after initialization.
+`register_app_routes()` takes the framework's `ServerRuntime` and passes the
+dependencies each feature uses. Keep each HTTP method in its own
+`registerHandler()` call. The framework registers access logging and exception
+handling as separate hooks.
 
 ### Protected routes and roles
 
-The server setup callback returns the token verifier alongside the workers.
-The framework installs it before starting Drogon. In `registerHandler()`, use
+The framework installs its token verifier before starting Drogon. In `registerHandler()`, use
 `Auth<>()` for any valid JWT, `Auth<Role::admin>()` for a single required role,
 or `Auth<Role::member, Role::admin>()` to allow either listed role.
 
@@ -364,8 +367,7 @@ The backend commits when the callback completes and rolls back if it throws. Use
 
 Set defaults in `config.json`. Every top-level config field can be set through
 the process environment or `.env` using `APP_` followed by the uppercase JSON key.
-For example, `APP_JWT_LIFETIME_SECONDS=3600` sets `jwt_lifetime_seconds`. The precedence is process
-environment, then `.env`, then JSON, then C++ defaults. Environment-provided fields
+The precedence is process environment, then `.env`, then JSON, then C++ defaults. Environment-provided fields
 can be omitted from the JSON file. See [config.json](config.json) and [`.env.example`](.env.example).
 
 The optional `server` object configures the framework runner, including the
@@ -377,6 +379,7 @@ listener and log level.
 | `port` | `8080` |
 | `max_connections` | `64` |
 | `log_level` | `info` |
+| `jwt_lifetime_seconds` | `1800` (valid range 1–86400) |
 | `state_directory` | `.local` |
 | `database_filename` | `users.sqlite3` inside the state directory |
 | `public_directory` | `public` |
@@ -392,7 +395,7 @@ underscores, or tildes. Changing the public prefix updates asset and upload URLs
 Place the demo assets in the configured public directory. Drogon allows an
 additional 64 KiB per request for multipart framing.
 
-In `.env`, `APP_SERVER='{"port":8081,"log_level":"warn","public_url_prefix":"/assets/"}'`
+In `.env`, `APP_SERVER='{"port":8081,"log_level":"warn","jwt_lifetime_seconds":3600,"public_url_prefix":"/assets/"}'`
 replaces the JSON `server` object. Omitted fields in that override use the defaults.
 
 Keep sensitive values in the process environment or in the ignored `.env` file.

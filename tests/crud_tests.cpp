@@ -5,6 +5,7 @@
 #include "framework/db/base_dao.h"
 #include "framework/crud/crud_router.h"
 #include "framework/http/server_hooks.h"
+#include "framework/http/server_runtime.h"
 #include "framework/support/workers.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -241,7 +242,7 @@ class CrudServer {
                 }
                 this->mount_social(server);
                 const detail::AuthVerifierScope auth_verifier(
-                    {social_services_, &social_services_->tokens});
+                    {runtime_, &runtime_->tokens()});
                 server.registerBeginningAdvice([ready] { ready->set_value(); });
                 server.run();
             } catch (...) {
@@ -283,16 +284,18 @@ class CrudServer {
         auto likes = drogon::sync_wait(SocialLikeDao::init(database));
         constexpr auto username = "social-fixture";
         drogon::sync_wait(users.create({{username, "unused"}}));
+        runtime_ = std::make_shared<ServerRuntime>(
+            ResolvedServerConfig{}, database, Logger(LogLevel::error),
+            Tokens(fixture_signing_key, std::chrono::seconds(1800)));
         social_services_ = std::make_shared<Services>(
-            ResolvedServerConfig{}, Config{.jwt_lifetime_seconds = 1800},
-            Logger(LogLevel::error), fixture_signing_key,
             UserService(std::move(users)),
             SocialService(std::move(posts), std::move(comments),
                           std::move(likes)));
-        const auto& services = social_services_;
-        social_token_ = services->tokens.issue(username);
-        register_auth_routes(server, services);
-        register_social_routes(server, services, "/public/");
+        social_token_ = runtime_->tokens().issue(username);
+        register_auth_routes(server, social_services_, runtime_->tokens(),
+                             runtime_->workers());
+        register_social_routes(server, social_services_, runtime_->tokens(),
+                               "/public/");
         server.registerHandler("/fixture/auth/public",
                                [](drogon::HttpRequestPtr request)
                                    -> drogon::Task<drogon::HttpResponsePtr> {
@@ -316,6 +319,7 @@ class CrudServer {
     unsigned short port_;
     std::string social_token_;
     std::shared_ptr<Services> social_services_;
+    std::shared_ptr<ServerRuntime> runtime_;
     std::future<void> server_;
 };
 

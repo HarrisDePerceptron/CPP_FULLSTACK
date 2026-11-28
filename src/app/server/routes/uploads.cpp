@@ -1,8 +1,9 @@
 #include "app/server/dto/upload_dtos.h"
 #include "app/server/routes.h"
-#include "app/server/services.h"
 #include "framework/auth/auth.h"
 #include "framework/http/json_response.h"
+#include "framework/storage/uploads.h"
+#include "framework/support/workers.h"
 
 #include <drogon/drogon.h>
 
@@ -12,18 +13,17 @@ namespace {
 
 using namespace drogon;
 
-Task<HttpResponsePtr> upload(std::shared_ptr<Services> services,
+Task<HttpResponsePtr> upload(const Uploads& uploads, Workers& workers,
                              HttpRequestPtr request,
                              const std::string& uploads_url_prefix) {
-    const auto saved = co_await services->workers.submit(
-        [&] -> std::expected<std::string, UploadError> {
+    const auto saved =
+        co_await workers.submit([&] -> std::expected<std::string, UploadError> {
             MultiPartParser parser;
             if (parser.parse(request) != 0 || parser.getFiles().size() != 1 ||
                 parser.getFiles().front().getItemName() != "file") {
                 return std::unexpected(UploadError::empty);
             }
-            return services->uploads.save(
-                parser.getFiles().front().fileContent());
+            return uploads.save(parser.getFiles().front().fileContent());
         });
 
     if (!saved) {
@@ -32,7 +32,7 @@ Task<HttpResponsePtr> upload(std::shared_ptr<Services> services,
             co_return api_error(*request, k400BadRequest, "VALIDATION_FAILED",
                                 "Choose one file to upload.");
         case UploadError::too_large: {
-            const auto limit = services->uploads.maximum_bytes();
+            const auto limit = uploads.maximum_bytes();
             auto message = limit == max_upload_bytes
                                ? std::string("The file exceeds 10 MiB.")
                                : "The file exceeds the " +
@@ -53,10 +53,10 @@ Task<HttpResponsePtr> upload(std::shared_ptr<Services> services,
     co_return response;
 }
 
-Task<HttpResponsePtr> download(std::shared_ptr<Services> services,
+Task<HttpResponsePtr> download(const Uploads& uploads, Workers& workers,
                                HttpRequestPtr request, std::string name) {
-    co_return co_await services->workers.submit([&] {
-        const auto file = services->uploads.find(name);
+    co_return co_await workers.submit([&] {
+        const auto file = uploads.find(name);
         if (!file)
             return api_error(*request, k404NotFound, "NOT_FOUND",
                              "Upload not found.");
@@ -71,18 +71,20 @@ Task<HttpResponsePtr> download(std::shared_ptr<Services> services,
 }
 
 void register_upload_routes(drogon::HttpAppFramework& server,
-                            const std::shared_ptr<Services>& services,
+                            const Uploads& uploads, Workers& workers,
                             const std::string& uploads_url_prefix) {
     server.registerHandler(
         "/api/uploads",
-        [services, uploads_url_prefix](HttpRequestPtr request) {
-            return upload(services, std::move(request), uploads_url_prefix);
+        [&uploads, &workers, uploads_url_prefix](HttpRequestPtr request) {
+            return upload(uploads, workers, std::move(request),
+                          uploads_url_prefix);
         },
         {Post, Auth<>()});
     server.registerHandler(
         uploads_url_prefix + "{1}",
-        [services](HttpRequestPtr request, std::string name) {
-            return download(services, std::move(request), std::move(name));
+        [&uploads, &workers](HttpRequestPtr request, std::string name) {
+            return download(uploads, workers, std::move(request),
+                            std::move(name));
         },
         {Get});
 }

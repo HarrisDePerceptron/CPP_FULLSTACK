@@ -79,10 +79,9 @@ HttpResponsePtr render_page(const std::string& view,
 }
 
 Task<HttpResponsePtr> feed_page(std::shared_ptr<Services> services,
-                                HttpRequestPtr request,
+                                HttpRequestPtr request, const Tokens& tokens,
                                 const std::string& public_url_prefix) {
-    const auto token =
-        services->tokens.verify(request->getCookie(session_cookie_name));
+    const auto token = tokens.verify(request->getCookie(session_cookie_name));
     if (!token || !co_await services->users.find_id(token->subject)) {
         co_return no_store(
             HttpResponse::newRedirectionResponse("/social/login"));
@@ -218,11 +217,13 @@ Task<HttpResponsePtr> set_like(std::shared_ptr<Services> services,
 
 void register_social_routes(drogon::HttpAppFramework& server,
                             const std::shared_ptr<Services>& services,
+                            const Tokens& tokens,
                             const std::string& public_url_prefix) {
     server.registerHandler(
         "/",
-        [services, public_url_prefix](HttpRequestPtr request) {
-            return feed_page(services, std::move(request), public_url_prefix);
+        [services, &tokens, public_url_prefix](HttpRequestPtr request) {
+            return feed_page(services, std::move(request), tokens,
+                             public_url_prefix);
         },
         {Get});
     server.registerHandler("/social", &redirect_to_feed, {Get});
