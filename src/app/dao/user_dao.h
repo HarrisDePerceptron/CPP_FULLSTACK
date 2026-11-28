@@ -36,6 +36,11 @@ class UserDao final : public BaseDao<UserDao, UserRecord> {
                                 std::string password_hash) const&;
     drogon::Task<> replace_demo(std::string username,
                                 std::string password_hash) const&& = delete;
+    static std::vector<Role> read_roles(const UserRecord& user);
+    drogon::Task<bool> set_roles(UserRecord::Id user,
+                                 std::vector<Role> roles) const&;
+    drogon::Task<bool> set_roles(UserRecord::Id user,
+                                 std::vector<Role> roles) const&& = delete;
 
   private:
     explicit UserDao(DatabaseBackendPtr database);

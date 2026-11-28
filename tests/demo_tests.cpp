@@ -168,8 +168,9 @@ template <typename T> T run_on_event_loop(drogon::Task<T> task) {
 bool authenticate(const UserService& users, std::string username,
                   std::string password) {
     Workers workers;
-    return run_on_event_loop(
-        users.authenticate(std::move(username), std::move(password), workers));
+    return run_on_event_loop(users.authenticate(std::move(username),
+                                                std::move(password), workers))
+        .has_value();
 }
 
 template <auto member, typename Value>
@@ -1501,9 +1502,9 @@ TEST_CASE(
     std::vector<std::string> names;
     for (const auto& column : columns)
         names.push_back(column[0].as<std::string>());
-    CHECK(names == std::vector<std::string>{"username", "password_hash",
-                                            "seed_key", "id", "deleted_at",
-                                            "created_at", "updated_at"});
+    CHECK(names == std::vector<std::string>{
+                       "username", "password_hash", "seed_key", "roles", "id",
+                       "deleted_at", "created_at", "updated_at"});
     CHECK(first->updated_at == first->created_at);
     CHECK(drogon::sync_wait(
               users.find().where<&UserRecord::id>(*first->id).collect())
@@ -1640,6 +1641,7 @@ TEST_CASE("Soft deletion on an existing untimed table migrates and rolls back "
     const auto users = drogon::sync_wait(UntimedUserDao::init(database));
     const auto migrated = drogon::sync_wait(users.find_by_id(1).collect());
     REQUIRE(migrated);
+    CHECK(UserDao::read_roles(*migrated) == std::vector{Role::member});
     CHECK_FALSE(migrated->deleted_at);
     CHECK_THROWS_WITH(
         run_on_event_loop(users.transaction([&](DaoTransaction& tx)
@@ -1996,10 +1998,17 @@ TEST_CASE("Glaze JWT serialization and verification preserve signed claims",
           "[jwt]") {
     const auto key = std::string(32, 'x');
     const Tokens tokens(key, 1800s);
-    const auto token = tokens.issue("demo-user");
-    CHECK(tokens.verify(token) == std::optional<std::string>{"demo-user"});
-    CHECK(Tokens(key, 1800s).verify(token) ==
-          std::optional<std::string>{"demo-user"});
+    const auto token =
+        tokens.issue("demo-user", std::vector<std::string>{"member", "admin"});
+    const auto verified = Tokens(key, 1800s).verify(token);
+    REQUIRE(verified);
+    CHECK(verified->subject == "demo-user");
+    CHECK(verified->issuer == "app-template");
+    REQUIRE(verified->issued_at);
+    CHECK(verified->expires_at - *verified->issued_at == 1800s);
+    CHECK(verified->header.at("alg").get<std::string>() == "HS256");
+    CHECK(verified->claims.at("sub").get<std::string>() == "demo-user");
+    CHECK(verified->roles<Role>() == std::vector{Role::admin, Role::member});
     CHECK_FALSE(Tokens(std::string(32, 'y'), 1800s).verify(token));
     CHECK_FALSE(tokens.verify(""));
     CHECK_FALSE(tokens.verify("garbage"));
@@ -2010,6 +2019,38 @@ TEST_CASE("Glaze JWT serialization and verification preserve signed claims",
     const Tokens expired(key, -1s);
     CHECK_FALSE(tokens.verify(expired.issue("demo-user")));
     CHECK_FALSE(tokens.verify(tokens.issue("")));
+}
+
+TEST_CASE(
+    "JWT verification preserves legacy claims and rejects malformed roles",
+    "[jwt]") {
+    const Tokens tokens(std::string(32, 'x'), 1800s);
+    // Fixtures signed with the test key, with an expiration in 2100.
+    constexpr auto legacy =
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6InRlc3QifQ."
+        "eyJpc3MiOiJhcHAtdGVtcGxhdGUiLCJzdWIiOiJsZWdhY3ktdXNlciIsImV4cCI6"
+        "NDEwMjQ0NDgwMCwidGVuYW50X2lkIjoiZml4dHVyZSJ9."
+        "gI68uq4ZB5g37sXO0_ir6DVcfC-CY6dfojAk4FWse6g";
+    const auto verified = tokens.verify(legacy);
+    REQUIRE(verified);
+    CHECK(verified->subject == "legacy-user");
+    CHECK_FALSE(verified->issued_at);
+    CHECK(verified->roles<Role>().empty());
+    CHECK(verified->header.at("kid").get<std::string>() == "test");
+    CHECK(verified->claims.at("tenant_id").get<std::string>() == "fixture");
+
+    constexpr auto scalar_roles =
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6InRlc3QifQ."
+        "eyJpc3MiOiJhcHAtdGVtcGxhdGUiLCJzdWIiOiJsZWdhY3ktdXNlciIsImV4cCI6"
+        "NDEwMjQ0NDgwMCwidGVuYW50X2lkIjoiZml4dHVyZSIsInJvbGVzIjoiYWRtaW4ifQ."
+        "0S3zNpPm9LxAHBWnSniS2b9ucyyMf2LgXJTUIADhwoM";
+    constexpr auto numeric_role =
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6InRlc3QifQ."
+        "eyJpc3MiOiJhcHAtdGVtcGxhdGUiLCJzdWIiOiJsZWdhY3ktdXNlciIsImV4cCI6"
+        "NDEwMjQ0NDgwMCwidGVuYW50X2lkIjoiZml4dHVyZSIsInJvbGVzIjpbNDJdfQ."
+        "9ofjlFjQ69iszFv4EvvHiUP9NzE-X-iLAYKg6YvHY1w";
+    CHECK_FALSE(tokens.verify(scalar_roles));
+    CHECK_FALSE(tokens.verify(numeric_role));
 }
 
 TEST_CASE("API exception handling preserves field validation and hides "

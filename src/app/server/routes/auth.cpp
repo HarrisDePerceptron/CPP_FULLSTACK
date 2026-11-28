@@ -1,7 +1,7 @@
 #include "app/server/dto/account_dtos.h"
 #include "app/server/routes.h"
 #include "app/server/services.h"
-#include "framework/auth/jwt_middleware.h"
+#include "framework/auth/auth.h"
 #include "framework/http/json_response.h"
 
 #include <drogon/drogon.h>
@@ -62,13 +62,18 @@ Task<HttpResponsePtr> signup(std::shared_ptr<Services> services,
 Task<HttpResponsePtr> login(std::shared_ptr<Services> services,
                             HttpRequestPtr request) {
     const auto credentials = read_credentials(request, 4096);
-    if (!co_await services->users.authenticate(
-            credentials.username, credentials.password, services->workers)) {
+    const auto roles = co_await services->users.authenticate(
+        credentials.username, credentials.password, services->workers);
+    if (!roles) {
         co_return api_error(*request, k401Unauthorized, "UNAUTHORIZED",
                             "Invalid username or password.");
     }
 
-    const auto token = services->tokens.issue(credentials.username);
+    std::vector<std::string> names;
+    names.reserve(roles->size());
+    for (const auto role : *roles)
+        names.emplace_back(role_name(role));
+    const auto token = services->tokens.issue(credentials.username, names);
     const auto lifetime = services->tokens.lifetime().count();
     auto response = api_ok(*request, LoginResult{token, "Bearer", lifetime});
     response->addCookie(
@@ -85,9 +90,7 @@ Task<HttpResponsePtr> logout(HttpRequestPtr request) {
 }
 
 Task<HttpResponsePtr> current_user(HttpRequestPtr request) {
-    auto response = api_ok(
-        *request,
-        Identity{request->attributes()->get<std::string>(subject_attribute)});
+    auto response = api_ok(*request, Identity{get_current_username(*request)});
     response->addHeader("Cache-Control", "no-store");
     co_return response;
 }
@@ -96,7 +99,7 @@ Task<HttpResponsePtr> current_user(HttpRequestPtr request) {
 
 void register_auth_routes(drogon::HttpAppFramework& server,
                           const std::shared_ptr<Services>& services,
-                          const std::string& jwt) {
+                          Auth& auth) {
     server.registerHandler("/api/signup",
                            [services](HttpRequestPtr request) {
                                return signup(services, std::move(request));
@@ -108,7 +111,7 @@ void register_auth_routes(drogon::HttpAppFramework& server,
                            },
                            {Post});
     server.registerHandler("/api/logout", &logout, {Post});
-    server.registerHandler("/api/me", &current_user, {Get, jwt});
+    server.registerHandler("/api/me", &current_user, {Get, auth()});
 }
 
 }

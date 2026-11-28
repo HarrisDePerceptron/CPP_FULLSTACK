@@ -1,6 +1,7 @@
+#include "app/server/dto/account_dtos.h"
 #include "app/server/routes.h"
 #include "app/server/services.h"
-#include "framework/auth/jwt_middleware.h"
+#include "framework/auth/auth.h"
 #include "framework/db/base_dao.h"
 #include "framework/crud/crud_router.h"
 #include "framework/http/server_hooks.h"
@@ -26,6 +27,8 @@ struct WidgetFields {
     std::optional<std::string> note;
     std::optional<std::string> private_value;
 };
+
+constexpr auto fixture_signing_key = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 
 using WidgetRecord = DaoRecord<WidgetFields>;
 
@@ -257,6 +260,16 @@ class CrudServer {
 
     const std::string& social_token() const { return social_token_; }
 
+    drogon::Task<bool> set_roles(std::string username,
+                                 std::vector<Role> roles) const {
+        const auto id =
+            co_await social_services_->users.find_id(std::move(username));
+        if (!id)
+            co_return false;
+        co_return co_await social_services_->users.dao().set_roles(
+            *id, std::move(roles));
+    }
+
   private:
     void mount_social(drogon::HttpAppFramework& server) {
         if (sodium_init() < 0)
@@ -268,31 +281,56 @@ class CrudServer {
         auto likes = drogon::sync_wait(SocialLikeDao::init(database));
         constexpr auto username = "social-fixture";
         drogon::sync_wait(users.create({{username, "unused"}}));
-        auto services = std::make_shared<Services>(
+        social_services_ = std::make_shared<Services>(
             ResolvedServerConfig{}, Config{.jwt_lifetime_seconds = 1800},
-            Logger(LogLevel::error), std::string(32, 'x'),
+            Logger(LogLevel::error), fixture_signing_key,
             UserService(std::move(users)),
             SocialService(std::move(posts), std::move(comments),
                           std::move(likes)));
+        const auto& services = social_services_;
         social_token_ = services->tokens.issue(username);
-        const auto jwt =
-            register_jwt_middleware(server, {services, &services->tokens});
-        register_social_routes(server, services, jwt, "/public/");
+        Auth auth(server, {services, &services->tokens});
+        register_auth_routes(server, services, auth);
+        register_social_routes(server, services, auth, "/public/");
+        const auto inspect_username = [](drogon::HttpRequestPtr request)
+            -> drogon::Task<drogon::HttpResponsePtr> {
+            co_return api_ok(*request,
+                             Identity{get_current_username(*request)});
+        };
+        server.registerHandler("/fixture/auth/any", inspect_username,
+                               {drogon::Get, auth()});
+        server.registerHandler("/fixture/auth/admin", inspect_username,
+                               {drogon::Get, auth(Role::admin)});
+        server.registerHandler(
+            "/fixture/auth/either", inspect_username,
+            {drogon::Get, auth({Role::member, Role::admin})});
+        if (auth({Role::admin, Role::member, Role::admin}) !=
+            auth({Role::member, Role::admin})) {
+            throw std::logic_error("Equivalent role sets must share a policy");
+        }
     }
 
     unsigned short port_;
     std::string social_token_;
+    std::shared_ptr<Services> social_services_;
     std::future<void> server_;
 };
 
 class CrudClient {
   public:
-    explicit CrudClient(std::string prefix, std::string bearer = {})
+    explicit CrudClient(std::string prefix, std::string bearer = {},
+                        std::string session = {})
         : prefix_(std::move(prefix)), bearer_(std::move(bearer)),
+          session_(std::move(session)),
           client_(drogon::HttpClient::newHttpClient(server().base_url())) {}
 
     static CrudClient social() {
         return CrudClient("", server().social_token());
+    }
+
+    static bool set_roles(std::string username, std::vector<Role> roles) {
+        return drogon::sync_wait(
+            server().set_roles(std::move(username), std::move(roles)));
     }
 
     drogon::HttpResponsePtr get(const std::string& path) const {
@@ -300,8 +338,9 @@ class CrudClient {
     }
 
     drogon::HttpResponsePtr post(const std::string& path,
-                                 const std::string& body) const {
-        return send(drogon::Post, path, body);
+                                 const std::string& body,
+                                 double timeout_seconds = 2) const {
+        return send(drogon::Post, path, body, timeout_seconds);
     }
 
     drogon::HttpResponsePtr patch(const std::string& path,
@@ -316,18 +355,23 @@ class CrudClient {
   private:
     drogon::HttpResponsePtr send(drogon::HttpMethod method,
                                  const std::string& path,
-                                 const std::string& body = {}) const {
+                                 const std::string& body = {},
+                                 double timeout_seconds = 2) const {
+        CAPTURE(path);
         const auto request = drogon::HttpRequest::newHttpRequest();
         request->setMethod(method);
         request->setPath(prefix_ + path);
         request->setPathEncode(false);
         if (!bearer_.empty())
             request->addHeader("Authorization", "Bearer " + bearer_);
+        if (!session_.empty())
+            request->addCookie(session_cookie_name, session_);
         if (method == drogon::Post || method == drogon::Patch) {
             request->setContentTypeCode(drogon::CT_APPLICATION_JSON);
             request->setBody(body);
         }
-        auto [result, response] = client_->sendRequest(request, 2);
+        auto [result, response] =
+            client_->sendRequest(request, timeout_seconds);
         REQUIRE(result == drogon::ReqResult::Ok);
         return response;
     }
@@ -339,6 +383,7 @@ class CrudClient {
 
     std::string prefix_;
     std::string bearer_;
+    std::string session_;
     drogon::HttpClientPtr client_;
 };
 
@@ -370,6 +415,93 @@ TEST_CASE("The exception hook returns a generic 500 for unexpected errors",
     const auto json = response->getJsonObject();
     CHECK((*json)["error"]["code"].asString() == "INTERNAL_ERROR");
     CHECK((*json)["error"]["message"].asString() == "Internal server error.");
+}
+
+TEST_CASE("The current username helper requires authenticated request context",
+          "[http][jwt]") {
+    const auto request = drogon::HttpRequest::newHttpRequest();
+    CHECK_THROWS_AS(get_current_username(*request), std::logic_error);
+}
+
+TEST_CASE("Auth rejects missing credentials and checks roles before invoking "
+          "the handler",
+          "[http][jwt]") {
+    using namespace crud_test;
+    const CrudClient public_client("");
+    const auto missing = public_client.get("/fixture/auth/any");
+    check_reply(missing, 401);
+    CHECK(missing->getHeader("WWW-Authenticate") == "Bearer");
+    check_reply(CrudClient("", "bad-token").get("/fixture/auth/admin"), 401);
+
+    const auto account = CrudClient::social();
+    const auto identity = check_reply(account.get("/fixture/auth/any"), 200);
+    REQUIRE(identity.size() == 1);
+    CHECK(identity[0]["username"].asString() == "social-fixture");
+    const auto forbidden = account.get("/fixture/auth/either");
+    check_reply(forbidden, 403);
+    CHECK((*forbidden->getJsonObject())["error"]["code"].asString() ==
+          "FORBIDDEN");
+}
+
+TEST_CASE("Login signs stored roles and role changes appear in a fresh token",
+          "[http][jwt]") {
+    using namespace crud_test;
+    const CrudClient public_client("");
+    constexpr auto credentials =
+        R"({"username":"role-fixture","password":"example-password"})";
+    constexpr double password_timeout_seconds = 10;
+    check_reply(
+        public_client.post(
+            "/api/signup",
+            R"({"username":"role-fixture","password":"example-password","roles":["admin"]})"),
+        400);
+    check_reply(public_client.post("/api/signup", credentials,
+                                   password_timeout_seconds),
+                201);
+    const auto login = [&] {
+        const auto reply =
+            check_reply(public_client.post("/api/login", credentials,
+                                           password_timeout_seconds),
+                        200);
+        REQUIRE(reply.size() == 1);
+        return reply[0]["access_token"].asString();
+    };
+
+    const auto member_token = login();
+    const CrudClient member("", member_token);
+    const Tokens tokens(fixture_signing_key, std::chrono::seconds(1800));
+    const auto member_claims = tokens.verify(member_token);
+    REQUIRE(member_claims);
+    CHECK(member_claims->roles<Role>() == std::vector{Role::member});
+    const auto member_identity =
+        check_reply(member.get("/fixture/auth/either"), 200);
+    REQUIRE(member_identity.size() == 1);
+    CHECK(member_identity[0]["username"].asString() == "role-fixture");
+    check_reply(member.get("/fixture/auth/admin"), 403);
+
+    REQUIRE(CrudClient::set_roles("role-fixture",
+                                  {Role::admin, Role::member, Role::admin}));
+    const auto admin_token = login();
+    const CrudClient admin("", "", admin_token);
+    const auto admin_claims = tokens.verify(admin_token);
+    REQUIRE(admin_claims);
+    CHECK(admin_claims->roles<Role>() ==
+          std::vector{Role::admin, Role::member});
+    const auto admin_identity =
+        check_reply(admin.get("/fixture/auth/admin"), 200);
+    REQUIRE(admin_identity.size() == 1);
+    CHECK(admin_identity[0]["username"].asString() == "role-fixture");
+    const auto profile = check_reply(admin.get("/api/me"), 200);
+    REQUIRE(profile.size() == 1);
+    CHECK(profile[0]["username"].asString() == "role-fixture");
+    check_reply(admin.get("/fixture/auth/either"), 200);
+    check_reply(
+        CrudClient("", "bad-token", admin_token).get("/fixture/auth/admin"),
+        401);
+
+    REQUIRE(CrudClient::set_roles("role-fixture", {Role::member}));
+    check_reply(admin.get("/fixture/auth/admin"), 200);
+    check_reply(CrudClient("", login()).get("/fixture/auth/admin"), 403);
 }
 
 TEST_CASE("Social routes trim submitted text and enforce Unicode limits",

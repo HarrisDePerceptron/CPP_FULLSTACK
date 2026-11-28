@@ -1,5 +1,9 @@
 #include "user_dao.h"
 
+#include <glaze/glaze.hpp>
+
+#include <algorithm>
+
 namespace APP_NAMESPACE {
 
 drogon::Task<UserDao> UserDao::init(DatabaseBackendPtr database) {
@@ -59,6 +63,40 @@ drogon::Task<> UserDao::replace_demo(std::string username,
     co_await upsert<&UserRecord::seed_key, &UserRecord::username,
                     &UserRecord::password_hash>(
         {{std::move(username), std::move(password_hash), "demo"}});
+}
+
+std::vector<Role> UserDao::read_roles(const UserRecord& user) {
+    const auto& json = user.roles.value;
+    std::vector<std::string> names;
+    if (glz::validate_json(json) || glz::read_json(names, json))
+        throw std::runtime_error("Invalid stored account roles");
+    std::vector<Role> roles;
+    roles.reserve(names.size());
+    for (const auto& name : names) {
+        const auto role = magic_enum::enum_cast<Role>(name);
+        if (!role)
+            throw std::runtime_error("Unknown stored account role");
+        if (std::ranges::find(roles, *role) == roles.end())
+            roles.push_back(*role);
+    }
+    return roles;
+}
+
+drogon::Task<bool> UserDao::set_roles(UserRecord::Id user,
+                                      std::vector<Role> roles) const& {
+    std::vector<std::string_view> names;
+    names.reserve(roles.size());
+    for (const auto role : roles)
+        names.push_back(detail::enum_label(role));
+    std::ranges::sort(names);
+    const auto duplicates = std::ranges::unique(names);
+    names.erase(duplicates.begin(), duplicates.end());
+    auto json = glz::write_json(names);
+    if (!json)
+        throw std::runtime_error("Could not serialize account roles");
+    return this->update_by_id(user)
+        .set<&UserRecord::roles>(std::move(*json))
+        .execute();
 }
 
 }

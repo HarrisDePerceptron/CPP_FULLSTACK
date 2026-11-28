@@ -50,16 +50,19 @@ drogon::Task<bool> UserService::signup(Credentials credentials,
                                            std::move(hash));
 }
 
-drogon::Task<bool> UserService::authenticate(std::string username,
-                                             std::string password,
-                                             Workers& workers) const {
+drogon::Task<std::optional<std::vector<Role>>>
+UserService::authenticate(std::string username, std::string password,
+                          Workers& workers) const {
     const auto user = co_await dao_.find_by_username(std::move(username));
     if (!user)
-        co_return false;
-    co_return co_await workers.submit([&] {
+        co_return std::nullopt;
+    const auto verified = co_await workers.submit([&] {
         return crypto_pwhash_str_verify(user->password_hash.c_str(),
                                         password.data(), password.size()) == 0;
     });
+    if (!verified)
+        co_return std::nullopt;
+    co_return UserDao::read_roles(*user);
 }
 
 }

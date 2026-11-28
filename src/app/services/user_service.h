@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace APP_NAMESPACE {
 
@@ -26,8 +27,9 @@ class UserService {
     drogon::Task<std::optional<UserRecord::Id>>
     find_id(std::string username) const;
     drogon::Task<bool> signup(Credentials credentials, Workers& workers) const;
-    drogon::Task<bool> authenticate(std::string username, std::string password,
-                                    Workers& workers) const;
+    drogon::Task<std::optional<std::vector<Role>>>
+    authenticate(std::string username, std::string password,
+                 Workers& workers) const;
 
   private:
     UserDao dao_;

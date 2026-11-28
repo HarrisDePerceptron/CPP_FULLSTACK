@@ -11,12 +11,15 @@
 
 namespace APP_NAMESPACE {
 
+enum class Role { member, admin };
+
 struct UserFields {
     static constexpr std::string_view table_name = "users";
 
     Unique<std::string> username;
     std::string password_hash;
     Unique<std::optional<std::string>> seed_key;
+    Default<std::string, SqlText{R"(["member"])"}> roles;
 };
 
 using UserRecord = DaoRecord<UserFields>;

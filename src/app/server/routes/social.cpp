@@ -1,6 +1,6 @@
 #include "app/server/dto/social_dtos.h"
 #include "app/server/routes.h"
-#include "framework/auth/jwt_middleware.h"
+#include "framework/auth/auth.h"
 #include "framework/http/json_response.h"
 #include "framework/http/pagination.h"
 #include "framework/support/validation.h"
@@ -81,9 +81,9 @@ HttpResponsePtr render_page(const std::string& view,
 Task<HttpResponsePtr> feed_page(std::shared_ptr<Services> services,
                                 HttpRequestPtr request,
                                 const std::string& public_url_prefix) {
-    const auto username =
+    const auto token =
         services->tokens.verify(request->getCookie(session_cookie_name));
-    if (!username || !co_await services->users.find_id(*username)) {
+    if (!token || !co_await services->users.find_id(token->subject)) {
         co_return no_store(
             HttpResponse::newRedirectionResponse("/social/login"));
     }
@@ -100,8 +100,8 @@ Task<HttpResponsePtr> login_page(const std::string& public_url_prefix) {
 
 Task<HttpResponsePtr> search(std::shared_ptr<Services> services,
                              HttpRequestPtr request) {
-    const auto viewer = co_await services->users.find_id(
-        request->attributes()->get<std::string>(subject_attribute));
+    const auto viewer =
+        co_await services->users.find_id(get_current_username(*request));
     if (!viewer)
         co_return unauthorized(*request);
     auto matches = co_await services->social.search(
@@ -111,8 +111,8 @@ Task<HttpResponsePtr> search(std::shared_ptr<Services> services,
 
 Task<HttpResponsePtr> view_post(std::shared_ptr<Services> services,
                                 HttpRequestPtr request, std::string id) {
-    const auto viewer = co_await services->users.find_id(
-        request->attributes()->get<std::string>(subject_attribute));
+    const auto viewer =
+        co_await services->users.find_id(get_current_username(*request));
     if (!viewer)
         co_return unauthorized(*request);
     auto post = co_await services->social.view(*viewer, positive_integer(id));
@@ -123,8 +123,8 @@ Task<HttpResponsePtr> view_post(std::shared_ptr<Services> services,
 
 Task<HttpResponsePtr> list_user_posts(std::shared_ptr<Services> services,
                                       HttpRequestPtr request, std::string id) {
-    const auto viewer = co_await services->users.find_id(
-        request->attributes()->get<std::string>(subject_attribute));
+    const auto viewer =
+        co_await services->users.find_id(get_current_username(*request));
     if (!viewer)
         co_return unauthorized(*request);
     const auto page = read_page(*request);
@@ -138,8 +138,8 @@ Task<HttpResponsePtr> list_user_posts(std::shared_ptr<Services> services,
 
 Task<HttpResponsePtr> list_posts(std::shared_ptr<Services> services,
                                  HttpRequestPtr request) {
-    const auto user = co_await services->users.find_id(
-        request->attributes()->get<std::string>(subject_attribute));
+    const auto user =
+        co_await services->users.find_id(get_current_username(*request));
     if (!user)
         co_return unauthorized(*request);
     auto posts = co_await services->social.feed(*user, read_page(*request));
@@ -148,8 +148,7 @@ Task<HttpResponsePtr> list_posts(std::shared_ptr<Services> services,
 
 Task<HttpResponsePtr> create_post(std::shared_ptr<Services> services,
                                   HttpRequestPtr request) {
-    const auto username =
-        request->attributes()->get<std::string>(subject_attribute);
+    const auto username = get_current_username(*request);
     const auto user = co_await services->users.find_id(username);
     if (!user)
         co_return unauthorized(*request);
@@ -160,8 +159,8 @@ Task<HttpResponsePtr> create_post(std::shared_ptr<Services> services,
 
 Task<HttpResponsePtr> list_comments(std::shared_ptr<Services> services,
                                     HttpRequestPtr request, std::string id) {
-    const auto user = co_await services->users.find_id(
-        request->attributes()->get<std::string>(subject_attribute));
+    const auto user =
+        co_await services->users.find_id(get_current_username(*request));
     if (!user)
         co_return unauthorized(*request);
     const auto post = positive_integer(id);
@@ -189,8 +188,7 @@ Task<HttpResponsePtr> list_comments(std::shared_ptr<Services> services,
 
 Task<HttpResponsePtr> create_comment(std::shared_ptr<Services> services,
                                      HttpRequestPtr request, std::string id) {
-    const auto username =
-        request->attributes()->get<std::string>(subject_attribute);
+    const auto username = get_current_username(*request);
     const auto user = co_await services->users.find_id(username);
     if (!user)
         co_return unauthorized(*request);
@@ -205,8 +203,8 @@ Task<HttpResponsePtr> create_comment(std::shared_ptr<Services> services,
 Task<HttpResponsePtr> set_like(std::shared_ptr<Services> services,
                                HttpRequestPtr request, std::string id,
                                bool liked) {
-    const auto user = co_await services->users.find_id(
-        request->attributes()->get<std::string>(subject_attribute));
+    const auto user =
+        co_await services->users.find_id(get_current_username(*request));
     if (!user)
         co_return unauthorized(*request);
     auto like =
@@ -220,8 +218,7 @@ Task<HttpResponsePtr> set_like(std::shared_ptr<Services> services,
 
 void register_social_routes(drogon::HttpAppFramework& server,
                             const std::shared_ptr<Services>& services,
-                            const std::string& jwt,
-                            const std::string& public_url_prefix) {
+                            Auth& auth, const std::string& public_url_prefix) {
     server.registerHandler(
         "/",
         [services, public_url_prefix](HttpRequestPtr request) {
@@ -238,56 +235,56 @@ void register_social_routes(drogon::HttpAppFramework& server,
                            [services](HttpRequestPtr request) {
                                return search(services, std::move(request));
                            },
-                           {Get, jwt});
+                           {Get, auth()});
     server.registerHandler("/api/posts/{1}",
                            [services](HttpRequestPtr request, std::string id) {
                                return view_post(services, std::move(request),
                                                 std::move(id));
                            },
-                           {Get, jwt});
+                           {Get, auth()});
     server.registerHandler(
         "/api/users/{1}/posts",
         [services](HttpRequestPtr request, std::string id) {
             return uncached_list(
                 list_user_posts(services, std::move(request), std::move(id)));
         },
-        {Get, jwt});
+        {Get, auth()});
     server.registerHandler("/api/posts",
                            [services](HttpRequestPtr request) {
                                return uncached_list(
                                    list_posts(services, std::move(request)));
                            },
-                           {Get, jwt});
+                           {Get, auth()});
     server.registerHandler("/api/posts",
                            [services](HttpRequestPtr request) {
                                return create_post(services, std::move(request));
                            },
-                           {Post, jwt});
+                           {Post, auth()});
     server.registerHandler(
         "/api/posts/{1}/comments",
         [services](HttpRequestPtr request, std::string id) {
             return uncached_list(
                 list_comments(services, std::move(request), std::move(id)));
         },
-        {Get, jwt});
+        {Get, auth()});
     server.registerHandler("/api/posts/{1}/comments",
                            [services](HttpRequestPtr request, std::string id) {
                                return create_comment(
                                    services, std::move(request), std::move(id));
                            },
-                           {Post, jwt});
+                           {Post, auth()});
     server.registerHandler("/api/posts/{1}/like",
                            [services](HttpRequestPtr request, std::string id) {
                                return set_like(services, std::move(request),
                                                std::move(id), true);
                            },
-                           {Put, jwt});
+                           {Put, auth()});
     server.registerHandler("/api/posts/{1}/like",
                            [services](HttpRequestPtr request, std::string id) {
                                return set_like(services, std::move(request),
                                                std::move(id), false);
                            },
-                           {Delete, jwt});
+                           {Delete, auth()});
 }
 
 }

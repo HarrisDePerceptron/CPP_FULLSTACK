@@ -104,6 +104,32 @@ its paths, methods, and middleware with `registerHandler()`. Put each HTTP
 method on its own route registration and keep the handler beside the route list.
 The framework provides separate HTTP hooks for access logging and exception handling.
 
+### Protected routes and roles
+
+Pass the startup `Auth` object to each route module. In `registerHandler()`,
+use `auth()` for any valid JWT, `auth(Role::admin)` for a single required role,
+or `auth({Role::member, Role::admin})` to allow either listed role. The social
+demo uses `auth()` on its existing protected API routes.
+
+```cpp
+server.registerHandler("/api/me", &current_user, {drogon::Get, auth()});
+
+// Inside a protected handler, after the middleware runs:
+const auto& username = get_current_username(*request);
+```
+
+`get_current_username()` reads the verified JWT subject from the request.
+Call `UserService::find_id()` separately when a handler needs the database
+user ID. Middleware accepts a Bearer token or the `app_session` cookie.
+Invalid credentials return `401`. A valid token without a required role
+returns `403`.
+
+New and existing accounts default to `member`. Trusted code can replace the
+stored role set with `co_await user_dao.set_roles(user_id, {Role::member,
+Role::admin})`. Login signs the stored roles into the new JWT. Role changes
+take effect on the next login, and previously issued tokens keep their signed
+permissions until they expire. Legacy JWTs with no roles can use `auth()`.
+
 ## Database example
 
 The database layer opens one shared SQLite backend through Drogon. Each DAO maps a C++ record to a table and provides coroutine-based queries. In the server, startup initializes the DAOs, services own them and handle business logic, and routes call the services.

@@ -1,6 +1,7 @@
 #include "app/server/dto/upload_dtos.h"
 #include "app/server/routes.h"
 #include "app/server/services.h"
+#include "framework/auth/auth.h"
 #include "framework/http/json_response.h"
 
 #include <drogon/drogon.h>
@@ -71,14 +72,13 @@ Task<HttpResponsePtr> download(std::shared_ptr<Services> services,
 
 void register_upload_routes(drogon::HttpAppFramework& server,
                             const std::shared_ptr<Services>& services,
-                            const std::string& jwt,
-                            const std::string& uploads_url_prefix) {
+                            Auth& auth, const std::string& uploads_url_prefix) {
     server.registerHandler(
         "/api/uploads",
         [services, uploads_url_prefix](HttpRequestPtr request) {
             return upload(services, std::move(request), uploads_url_prefix);
         },
-        {Post, jwt});
+        {Post, auth()});
     server.registerHandler(
         uploads_url_prefix + "{1}",
         [services](HttpRequestPtr request, std::string name) {
