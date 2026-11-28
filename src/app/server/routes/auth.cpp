@@ -98,8 +98,7 @@ Task<HttpResponsePtr> current_user(HttpRequestPtr request) {
 }
 
 void register_auth_routes(drogon::HttpAppFramework& server,
-                          const std::shared_ptr<Services>& services,
-                          Auth& auth) {
+                          const std::shared_ptr<Services>& services) {
     server.registerHandler("/api/signup",
                            [services](HttpRequestPtr request) {
                                return signup(services, std::move(request));
@@ -111,7 +110,7 @@ void register_auth_routes(drogon::HttpAppFramework& server,
                            },
                            {Post});
     server.registerHandler("/api/logout", &logout, {Post});
-    server.registerHandler("/api/me", &current_user, {Get, auth()});
+    server.registerHandler("/api/me", &current_user, {Get, Auth<>()});
 }
 
 }

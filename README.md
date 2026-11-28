@@ -106,13 +106,13 @@ The framework provides separate HTTP hooks for access logging and exception hand
 
 ### Protected routes and roles
 
-Pass the startup `Auth` object to each route module. In `registerHandler()`,
-use `auth()` for any valid JWT, `auth(Role::admin)` for a single required role,
-or `auth({Role::member, Role::admin})` to allow either listed role. The social
-demo uses `auth()` on its existing protected API routes.
+The server setup callback returns the token verifier alongside the workers.
+The framework installs it before starting Drogon. In `registerHandler()`, use
+`Auth<>()` for any valid JWT, `Auth<Role::admin>()` for a single required role,
+or `Auth<Role::member, Role::admin>()` to allow either listed role.
 
 ```cpp
-server.registerHandler("/api/me", &current_user, {drogon::Get, auth()});
+server.registerHandler("/api/me", &current_user, {drogon::Get, Auth<>()});
 
 // Inside a protected handler, after the middleware runs:
 const auto& username = get_current_username(*request);
@@ -128,7 +128,7 @@ New and existing accounts default to `member`. Trusted code can replace the
 stored role set with `co_await user_dao.set_roles(user_id, {Role::member,
 Role::admin})`. Login signs the stored roles into the new JWT. Role changes
 take effect on the next login, and previously issued tokens keep their signed
-permissions until they expire. Legacy JWTs with no roles can use `auth()`.
+permissions until they expire. Legacy JWTs with no roles can use `Auth<>()`.
 
 ## Database example
 

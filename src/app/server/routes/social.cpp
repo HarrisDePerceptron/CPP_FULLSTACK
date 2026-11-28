@@ -218,7 +218,7 @@ Task<HttpResponsePtr> set_like(std::shared_ptr<Services> services,
 
 void register_social_routes(drogon::HttpAppFramework& server,
                             const std::shared_ptr<Services>& services,
-                            Auth& auth, const std::string& public_url_prefix) {
+                            const std::string& public_url_prefix) {
     server.registerHandler(
         "/",
         [services, public_url_prefix](HttpRequestPtr request) {
@@ -235,56 +235,56 @@ void register_social_routes(drogon::HttpAppFramework& server,
                            [services](HttpRequestPtr request) {
                                return search(services, std::move(request));
                            },
-                           {Get, auth()});
+                           {Get, Auth<>()});
     server.registerHandler("/api/posts/{1}",
                            [services](HttpRequestPtr request, std::string id) {
                                return view_post(services, std::move(request),
                                                 std::move(id));
                            },
-                           {Get, auth()});
+                           {Get, Auth<>()});
     server.registerHandler(
         "/api/users/{1}/posts",
         [services](HttpRequestPtr request, std::string id) {
             return uncached_list(
                 list_user_posts(services, std::move(request), std::move(id)));
         },
-        {Get, auth()});
+        {Get, Auth<>()});
     server.registerHandler("/api/posts",
                            [services](HttpRequestPtr request) {
                                return uncached_list(
                                    list_posts(services, std::move(request)));
                            },
-                           {Get, auth()});
+                           {Get, Auth<>()});
     server.registerHandler("/api/posts",
                            [services](HttpRequestPtr request) {
                                return create_post(services, std::move(request));
                            },
-                           {Post, auth()});
+                           {Post, Auth<>()});
     server.registerHandler(
         "/api/posts/{1}/comments",
         [services](HttpRequestPtr request, std::string id) {
             return uncached_list(
                 list_comments(services, std::move(request), std::move(id)));
         },
-        {Get, auth()});
+        {Get, Auth<>()});
     server.registerHandler("/api/posts/{1}/comments",
                            [services](HttpRequestPtr request, std::string id) {
                                return create_comment(
                                    services, std::move(request), std::move(id));
                            },
-                           {Post, auth()});
+                           {Post, Auth<>()});
     server.registerHandler("/api/posts/{1}/like",
                            [services](HttpRequestPtr request, std::string id) {
                                return set_like(services, std::move(request),
                                                std::move(id), true);
                            },
-                           {Put, auth()});
+                           {Put, Auth<>()});
     server.registerHandler("/api/posts/{1}/like",
                            [services](HttpRequestPtr request, std::string id) {
                                return set_like(services, std::move(request),
                                                std::move(id), false);
                            },
-                           {Delete, auth()});
+                           {Delete, Auth<>()});
 }
 
 }

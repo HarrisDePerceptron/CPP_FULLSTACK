@@ -24,7 +24,8 @@ inline int serve(const std::filesystem::path& root) {
                   const Logger& log) {
             const auto services = initialize_services(resolved, config, log);
             register_app_routes(server, services, resolved);
-            return std::shared_ptr<Workers>(services, &services->workers);
+            return ServerSetupResult{{services, &services->workers},
+                                     {services, &services->tokens}};
         });
 }
 

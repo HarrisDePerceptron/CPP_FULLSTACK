@@ -2,16 +2,14 @@
 
 #include "tokens.h"
 
-#include <initializer_list>
-#include <memory>
-#include <set>
-#include <string>
-#include <vector>
+#include <drogon/HttpMiddleware.h>
+#include <drogon/utils/HttpConstraint.h>
 
-namespace drogon {
-class HttpAppFramework;
-class HttpRequest;
-}
+#include <array>
+#include <memory>
+#include <span>
+#include <string>
+#include <string_view>
 
 namespace APP_NAMESPACE {
 
@@ -19,38 +17,50 @@ inline constexpr auto session_cookie_name = "app_session";
 
 const std::string& get_current_username(const drogon::HttpRequest& request);
 
-class Auth {
+namespace detail {
+
+class AuthVerifierScope {
   public:
-    Auth(drogon::HttpAppFramework& server,
-         std::shared_ptr<const Tokens> tokens);
-    Auth(const Auth&) = delete;
-    Auth& operator=(const Auth&) = delete;
+    explicit AuthVerifierScope(std::shared_ptr<const Tokens> verifier);
+    ~AuthVerifierScope();
+    AuthVerifierScope(const AuthVerifierScope&) = delete;
+    AuthVerifierScope& operator=(const AuthVerifierScope&) = delete;
 
-    std::string operator()() { return this->register_policy({}); }
+  private:
+    std::shared_ptr<const Tokens> previous_;
+};
 
-    template <RoleEnum E> std::string operator()(E role) {
-        return this->operator()(std::initializer_list<E>{role});
-    }
+drogon::Task<drogon::HttpResponsePtr>
+verify_request(drogon::HttpRequestPtr request,
+               drogon::MiddlewareNextAwaiter next,
+               std::span<const std::string_view> roles);
 
-    template <RoleEnum E>
-    std::string operator()(std::initializer_list<E> roles) {
-        if (roles.size() == 0)
-            throw std::invalid_argument(
-                "A role policy needs at least one role");
-        std::vector<std::string> names;
-        names.reserve(roles.size());
-        for (const auto role : roles)
-            names.emplace_back(role_name(role));
-        return this->register_policy(std::move(names));
+template <auto... roles>
+class AuthPolicyMiddleware final
+    : public drogon::HttpCoroMiddleware<AuthPolicyMiddleware<roles...>> {
+  public:
+    drogon::Task<drogon::HttpResponsePtr>
+    invoke(const drogon::HttpRequestPtr& request,
+           drogon::MiddlewareNextAwaiter&& next) override {
+        return verify_request(request, std::move(next), allowed_roles);
     }
 
   private:
-    std::string register_policy(std::vector<std::string> roles);
+    static constexpr std::array<std::string_view, sizeof...(roles)>
+        allowed_roles{magic_enum::enum_name(roles)...};
+};
 
-    drogon::HttpAppFramework& server_;
-    std::shared_ptr<const Tokens> tokens_;
-    std::string policy_prefix_;
-    std::set<std::string> registered_policies_;
+}
+
+template <auto... roles>
+    requires(RoleEnum<decltype(roles)> && ...)
+struct Auth {
+    static_assert((!magic_enum::enum_name(roles).empty() && ...),
+                  "Unknown role enum value");
+
+    operator drogon::internal::HttpConstraint() const {
+        return {detail::AuthPolicyMiddleware<roles...>::classTypeName()};
+    }
 };
 
 }

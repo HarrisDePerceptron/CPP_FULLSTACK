@@ -1,6 +1,7 @@
 #include "server.h"
 
 #include "server_hooks.h"
+#include "framework/auth/auth.h"
 #include "framework/support/validation.h"
 #include "framework/support/workers.h"
 
@@ -203,7 +204,8 @@ int run_http_server(drogon::HttpAppFramework& server, const fs::path& root,
 
     register_access_logging(server, log_level, log, resolved.public_url_prefix);
     register_exception_handler(server, log);
-    auto workers = setup(server, resolved, log);
+    auto [workers, tokens] = setup(server, resolved, log);
+    const detail::AuthVerifierScope auth_verifier(std::move(tokens));
     server.registerBeginningAdvice([log, address = config.bind_address,
                                     port = config.port] {
         log.write(LogLevel::info, "Listening on http://{}:{}", address, port);

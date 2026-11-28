@@ -17,6 +17,7 @@ class HttpAppFramework;
 namespace APP_NAMESPACE {
 
 class Workers;
+class Tokens;
 
 struct ServerConfig {
     std::string bind_address = "127.0.0.1";
@@ -46,7 +47,12 @@ struct ResolvedServerConfig {
     std::size_t max_request_bytes;
 };
 
-using ServerSetup = std::function<std::shared_ptr<Workers>(
+struct ServerSetupResult {
+    std::shared_ptr<Workers> workers;
+    std::shared_ptr<const Tokens> tokens;
+};
+
+using ServerSetup = std::function<ServerSetupResult(
     drogon::HttpAppFramework&, const ResolvedServerConfig&, const Logger&)>;
 
 int run_http_server(drogon::HttpAppFramework& server,

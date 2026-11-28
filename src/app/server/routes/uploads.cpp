@@ -72,13 +72,13 @@ Task<HttpResponsePtr> download(std::shared_ptr<Services> services,
 
 void register_upload_routes(drogon::HttpAppFramework& server,
                             const std::shared_ptr<Services>& services,
-                            Auth& auth, const std::string& uploads_url_prefix) {
+                            const std::string& uploads_url_prefix) {
     server.registerHandler(
         "/api/uploads",
         [services, uploads_url_prefix](HttpRequestPtr request) {
             return upload(services, std::move(request), uploads_url_prefix);
         },
-        {Post, auth()});
+        {Post, Auth<>()});
     server.registerHandler(
         uploads_url_prefix + "{1}",
         [services](HttpRequestPtr request, std::string name) {

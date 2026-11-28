@@ -240,6 +240,8 @@ class CrudServer {
                                                  .remove = false}));
                 }
                 this->mount_social(server);
+                const detail::AuthVerifierScope auth_verifier(
+                    {social_services_, &social_services_->tokens});
                 server.registerBeginningAdvice([ready] { ready->set_value(); });
                 server.run();
             } catch (...) {
@@ -289,25 +291,26 @@ class CrudServer {
                           std::move(likes)));
         const auto& services = social_services_;
         social_token_ = services->tokens.issue(username);
-        Auth auth(server, {services, &services->tokens});
-        register_auth_routes(server, services, auth);
-        register_social_routes(server, services, auth, "/public/");
+        register_auth_routes(server, services);
+        register_social_routes(server, services, "/public/");
+        server.registerHandler("/fixture/auth/public",
+                               [](drogon::HttpRequestPtr request)
+                                   -> drogon::Task<drogon::HttpResponsePtr> {
+                                   co_return api_ok(*request);
+                               },
+                               {drogon::Get});
         const auto inspect_username = [](drogon::HttpRequestPtr request)
             -> drogon::Task<drogon::HttpResponsePtr> {
             co_return api_ok(*request,
                              Identity{get_current_username(*request)});
         };
         server.registerHandler("/fixture/auth/any", inspect_username,
-                               {drogon::Get, auth()});
+                               {drogon::Get, Auth<>()});
         server.registerHandler("/fixture/auth/admin", inspect_username,
-                               {drogon::Get, auth(Role::admin)});
+                               {drogon::Get, Auth<Role::admin>()});
         server.registerHandler(
             "/fixture/auth/either", inspect_username,
-            {drogon::Get, auth({Role::member, Role::admin})});
-        if (auth({Role::admin, Role::member, Role::admin}) !=
-            auth({Role::member, Role::admin})) {
-            throw std::logic_error("Equivalent role sets must share a policy");
-        }
+            {drogon::Get, Auth<Role::member, Role::admin>()});
     }
 
     unsigned short port_;
@@ -421,6 +424,18 @@ TEST_CASE("The current username helper requires authenticated request context",
           "[http][jwt]") {
     const auto request = drogon::HttpRequest::newHttpRequest();
     CHECK_THROWS_AS(get_current_username(*request), std::logic_error);
+}
+
+TEST_CASE("A protected route fails closed without a configured verifier",
+          "[http][jwt]") {
+    using namespace crud_test;
+    const auto client = CrudClient::social();
+    {
+        const detail::AuthVerifierScope without_verifier(nullptr);
+        check_reply(CrudClient("").get("/fixture/auth/public"), 200);
+        check_reply(client.get("/fixture/auth/any"), 500);
+    }
+    check_reply(client.get("/fixture/auth/any"), 200);
 }
 
 TEST_CASE("Auth rejects missing credentials and checks roles before invoking "
