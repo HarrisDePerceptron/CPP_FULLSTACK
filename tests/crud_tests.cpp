@@ -167,6 +167,17 @@ unsigned short free_port() {
     return ntohs(address.sin_port);
 }
 
+drogon::Task<drogon::HttpResponsePtr>
+inspect_username(drogon::HttpRequestPtr request) {
+    co_return api_ok(*request, Identity{get_current_username(*request)});
+}
+
+drogon::Task<drogon::HttpResponsePtr>
+bound_label(const std::string& prefix, drogon::HttpRequestPtr request, int id,
+            std::string name) {
+    co_return api_ok(*request, prefix + std::to_string(id) + "-" + name);
+}
+
 Json::Value check_reply(const drogon::HttpResponsePtr& response, int status,
                         ApiPagination pagination = {}) {
     REQUIRE(response->statusCode() == status);
@@ -285,35 +296,30 @@ class CrudServer {
         constexpr auto username = "social-fixture";
         drogon::sync_wait(users.create({{username, "unused"}}));
         runtime_ = std::make_shared<ServerRuntime>(
-            ResolvedServerConfig{}, database, Logger(LogLevel::error),
+            server, ResolvedServerConfig{.public_url_prefix = "/public/"},
+            Logger(LogLevel::error),
             Tokens(fixture_signing_key, std::chrono::seconds(1800)));
         social_services_ = std::make_shared<Services>(
-            UserService(std::move(users)),
+            UserService(std::move(users), PasswordHasher(runtime_->workers())),
             SocialService(std::move(posts), std::move(comments),
                           std::move(likes)));
         social_token_ = runtime_->tokens().issue(username);
-        register_auth_routes(server, social_services_, runtime_->tokens(),
-                             runtime_->workers());
-        register_social_routes(server, social_services_, runtime_->tokens(),
-                               "/public/");
+        register_auth_routes(*runtime_, social_services_);
+        register_social_routes(*runtime_, social_services_);
         server.registerHandler("/fixture/auth/public",
                                [](drogon::HttpRequestPtr request)
                                    -> drogon::Task<drogon::HttpResponsePtr> {
                                    co_return api_ok(*request);
                                },
                                {drogon::Get});
-        const auto inspect_username = [](drogon::HttpRequestPtr request)
-            -> drogon::Task<drogon::HttpResponsePtr> {
-            co_return api_ok(*request,
-                             Identity{get_current_username(*request)});
-        };
-        server.registerHandler("/fixture/auth/any", inspect_username,
-                               {drogon::Get, Auth<>()});
-        server.registerHandler("/fixture/auth/admin", inspect_username,
-                               {drogon::Get, Auth<Role::admin>()});
-        server.registerHandler(
-            "/fixture/auth/either", inspect_username,
-            {drogon::Get, Auth<Role::member, Role::admin>()});
+        auto routes = runtime_->routes();
+        routes.get("/fixture/auth/any", inspect_username, Auth<>());
+        routes.get("/fixture/auth/admin", inspect_username,
+                   Auth<Role::admin>());
+        routes.get("/fixture/auth/either", inspect_username,
+                   Auth<Role::member, Role::admin>());
+        routes.with(std::string("item-"))
+            .patch("/fixture/bound/{1}/{2}", bound_label);
     }
 
     unsigned short port_;
@@ -404,6 +410,15 @@ std::string create_widget(const CrudClient& client) {
     return "/widgets/" + std::to_string(created[0]["id"].asInt64());
 }
 
+}
+
+TEST_CASE("A bound PATCH route retains its prefix and receives both path "
+          "arguments in order",
+          "[http]") {
+    const crud_test::CrudClient client("");
+    const auto data = crud_test::check_reply(
+        client.patch("/fixture/bound/42/widget", "{}"), 200);
+    CHECK(data[0].asString() == "item-42-widget");
 }
 
 TEST_CASE("The exception hook returns a 503 for a busy worker pool", "[http]") {

@@ -3,6 +3,7 @@
 #include "framework/auth/auth.h"
 #include "framework/http/json_response.h"
 #include "framework/http/pagination.h"
+#include "framework/http/server_runtime.h"
 #include "framework/support/validation.h"
 #include "app/server/services.h"
 
@@ -64,11 +65,10 @@ HttpResponsePtr no_store(HttpResponsePtr response) {
     return response;
 }
 
-Task<HttpResponsePtr> uncached_list(Task<HttpResponsePtr> pending) {
-    auto response = co_await std::move(pending);
+HttpResponsePtr no_store_on_success(HttpResponsePtr response) {
     if (response->statusCode() == k200OK)
-        co_return no_store(std::move(response));
-    co_return response;
+        return no_store(std::move(response));
+    return response;
 }
 
 HttpResponsePtr render_page(const std::string& view,
@@ -79,8 +79,9 @@ HttpResponsePtr render_page(const std::string& view,
 }
 
 Task<HttpResponsePtr> feed_page(std::shared_ptr<Services> services,
-                                HttpRequestPtr request, const Tokens& tokens,
-                                const std::string& public_url_prefix) {
+                                const Tokens& tokens,
+                                const std::string& public_url_prefix,
+                                HttpRequestPtr request) {
     const auto token = tokens.verify(request->getCookie(session_cookie_name));
     if (!token || !co_await services->users.find_id(token->subject)) {
         co_return no_store(
@@ -93,7 +94,8 @@ Task<HttpResponsePtr> redirect_to_feed(HttpRequestPtr) {
     co_return no_store(HttpResponse::newRedirectionResponse("/"));
 }
 
-Task<HttpResponsePtr> login_page(const std::string& public_url_prefix) {
+Task<HttpResponsePtr> login_page(const std::string& public_url_prefix,
+                                 HttpRequestPtr) {
     co_return render_page("AppViews::social_login", public_url_prefix);
 }
 
@@ -132,7 +134,7 @@ Task<HttpResponsePtr> list_user_posts(std::shared_ptr<Services> services,
     if (!profile)
         co_return api_error(*request, k404NotFound, "NOT_FOUND",
                             "That person could not be found.");
-    co_return api_ok(*request, std::move(*profile));
+    co_return no_store_on_success(api_ok(*request, std::move(*profile)));
 }
 
 Task<HttpResponsePtr> list_posts(std::shared_ptr<Services> services,
@@ -142,7 +144,7 @@ Task<HttpResponsePtr> list_posts(std::shared_ptr<Services> services,
     if (!user)
         co_return unauthorized(*request);
     auto posts = co_await services->social.feed(*user, read_page(*request));
-    co_return api_ok(*request, std::move(posts));
+    co_return no_store_on_success(api_ok(*request, std::move(posts)));
 }
 
 Task<HttpResponsePtr> create_post(std::shared_ptr<Services> services,
@@ -182,7 +184,7 @@ Task<HttpResponsePtr> list_comments(std::shared_ptr<Services> services,
     }
     if (!comments)
         co_return missing_post(*request);
-    co_return api_ok(*request, std::move(*comments));
+    co_return no_store_on_success(api_ok(*request, std::move(*comments)));
 }
 
 Task<HttpResponsePtr> create_comment(std::shared_ptr<Services> services,
@@ -213,79 +215,38 @@ Task<HttpResponsePtr> set_like(std::shared_ptr<Services> services,
     co_return no_store(api_ok(*request, *like));
 }
 
+Task<HttpResponsePtr> like_post(std::shared_ptr<Services> services,
+                                HttpRequestPtr request, std::string id) {
+    return set_like(std::move(services), std::move(request), std::move(id),
+                    true);
 }
 
-void register_social_routes(drogon::HttpAppFramework& server,
-                            const std::shared_ptr<Services>& services,
-                            const Tokens& tokens,
-                            const std::string& public_url_prefix) {
-    server.registerHandler(
-        "/",
-        [services, &tokens, public_url_prefix](HttpRequestPtr request) {
-            return feed_page(services, std::move(request), tokens,
-                             public_url_prefix);
-        },
-        {Get});
-    server.registerHandler("/social", &redirect_to_feed, {Get});
-    server.registerHandler("/social/login",
-                           [public_url_prefix](HttpRequestPtr) {
-                               return login_page(public_url_prefix);
-                           },
-                           {Get});
-    server.registerHandler("/api/search",
-                           [services](HttpRequestPtr request) {
-                               return search(services, std::move(request));
-                           },
-                           {Get, Auth<>()});
-    server.registerHandler("/api/posts/{1}",
-                           [services](HttpRequestPtr request, std::string id) {
-                               return view_post(services, std::move(request),
-                                                std::move(id));
-                           },
-                           {Get, Auth<>()});
-    server.registerHandler(
-        "/api/users/{1}/posts",
-        [services](HttpRequestPtr request, std::string id) {
-            return uncached_list(
-                list_user_posts(services, std::move(request), std::move(id)));
-        },
-        {Get, Auth<>()});
-    server.registerHandler("/api/posts",
-                           [services](HttpRequestPtr request) {
-                               return uncached_list(
-                                   list_posts(services, std::move(request)));
-                           },
-                           {Get, Auth<>()});
-    server.registerHandler("/api/posts",
-                           [services](HttpRequestPtr request) {
-                               return create_post(services, std::move(request));
-                           },
-                           {Post, Auth<>()});
-    server.registerHandler(
-        "/api/posts/{1}/comments",
-        [services](HttpRequestPtr request, std::string id) {
-            return uncached_list(
-                list_comments(services, std::move(request), std::move(id)));
-        },
-        {Get, Auth<>()});
-    server.registerHandler("/api/posts/{1}/comments",
-                           [services](HttpRequestPtr request, std::string id) {
-                               return create_comment(
-                                   services, std::move(request), std::move(id));
-                           },
-                           {Post, Auth<>()});
-    server.registerHandler("/api/posts/{1}/like",
-                           [services](HttpRequestPtr request, std::string id) {
-                               return set_like(services, std::move(request),
-                                               std::move(id), true);
-                           },
-                           {Put, Auth<>()});
-    server.registerHandler("/api/posts/{1}/like",
-                           [services](HttpRequestPtr request, std::string id) {
-                               return set_like(services, std::move(request),
-                                               std::move(id), false);
-                           },
-                           {Delete, Auth<>()});
+Task<HttpResponsePtr> unlike_post(std::shared_ptr<Services> services,
+                                  HttpRequestPtr request, std::string id) {
+    return set_like(std::move(services), std::move(request), std::move(id),
+                    false);
+}
+
+}
+
+void register_social_routes(const ServerRuntime& runtime,
+                            const std::shared_ptr<Services>& services) {
+    auto routes = runtime.routes();
+    auto posts = routes.with(services);
+    const auto& prefix = runtime.config().public_url_prefix;
+    posts.with(std::cref(runtime.tokens()), prefix).get("/", feed_page);
+    routes.get("/social", redirect_to_feed);
+    routes.with(prefix).get("/social/login", login_page);
+
+    posts.get("/api/search", search, Auth());
+    posts.get("/api/posts/{1}", view_post, Auth());
+    posts.get("/api/users/{1}/posts", list_user_posts, Auth());
+    posts.get("/api/posts", list_posts, Auth());
+    posts.post("/api/posts", create_post, Auth());
+    posts.get("/api/posts/{1}/comments", list_comments, Auth());
+    posts.post("/api/posts/{1}/comments", create_comment, Auth());
+    posts.put("/api/posts/{1}/like", like_post, Auth());
+    posts.del("/api/posts/{1}/like", unlike_post, Auth());
 }
 
 }

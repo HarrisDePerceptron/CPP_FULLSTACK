@@ -1,5 +1,6 @@
 #include "app/services/social_service.h"
 #include "app/services/user_service.h"
+#include "framework/support/workers.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <sodium.h>
@@ -22,16 +23,16 @@ struct SocialFixture {
     UserService users;
     SocialService social;
 
-    static drogon::Task<SocialFixture> create() {
+    static drogon::Task<SocialFixture> create(Workers& workers) {
         auto database = co_await open_sqlite_database(":memory:");
         auto users = co_await UserDao::init(database);
         auto posts = co_await SocialPostDao::init(database);
         auto comments = co_await SocialCommentDao::init(database);
         auto likes = co_await SocialLikeDao::init(database);
-        co_return SocialFixture{UserService(std::move(users)),
-                                SocialService(std::move(posts),
-                                              std::move(comments),
-                                              std::move(likes))};
+        co_return SocialFixture{
+            UserService(std::move(users), PasswordHasher(workers)),
+            SocialService(std::move(posts), std::move(comments),
+                          std::move(likes))};
     }
 
     drogon::Task<UserRecord::Id> account(std::string name) {
@@ -45,20 +46,22 @@ TEST_CASE("Signup stores a usable password and rejects a duplicate username",
     REQUIRE(sodium_init() >= 0);
     on_database_loop([]() -> drogon::Task<> {
         auto database = co_await open_sqlite_database(":memory:");
-        UserService users(co_await UserDao::init(database));
         Workers workers;
+        UserService users(co_await UserDao::init(database),
+                          PasswordHasher(workers));
         const Credentials credentials{"alice", "example-password"};
-        CHECK(co_await users.signup(credentials, workers));
-        CHECK_FALSE(co_await users.signup(credentials, workers));
+        CHECK(co_await users.signup(credentials));
+        CHECK_FALSE(co_await users.signup(credentials));
         CHECK(co_await users.authenticate(credentials.username,
-                                          credentials.password, workers));
+                                          credentials.password));
     });
 }
 
 TEST_CASE("The feed attributes posts and comments to their respective users",
           "[social]") {
     on_database_loop([]() -> drogon::Task<> {
-        auto fixture = co_await SocialFixture::create();
+        Workers workers;
+        auto fixture = co_await SocialFixture::create(workers);
         const auto alice = co_await fixture.account("alice");
         const auto bob = co_await fixture.account("bob");
         const auto post = co_await fixture.social.post(alice, "alice", "Hello");
@@ -80,7 +83,8 @@ TEST_CASE("The feed attributes posts and comments to their respective users",
 TEST_CASE("Like state is per user and repeated writes are idempotent",
           "[social]") {
     on_database_loop([]() -> drogon::Task<> {
-        auto fixture = co_await SocialFixture::create();
+        Workers workers;
+        auto fixture = co_await SocialFixture::create(workers);
         const auto alice = co_await fixture.account("alice");
         const auto bob = co_await fixture.account("bob");
         const auto post = co_await fixture.social.post(alice, "alice", "Hello");
@@ -146,7 +150,9 @@ TEST_CASE("Search ranks literal active post and username matches independently",
           "[social]") {
     on_database_loop([]() -> drogon::Task<> {
         auto database = co_await open_sqlite_database(":memory:");
-        UserService users(co_await UserDao::init(database));
+        Workers workers;
+        UserService users(co_await UserDao::init(database),
+                          PasswordHasher(workers));
         auto posts = co_await SocialPostDao::init(database);
         auto comments = co_await SocialCommentDao::init(database);
         auto likes = co_await SocialLikeDao::init(database);
@@ -229,7 +235,8 @@ TEST_CASE(
     "Older comment batches skip deleted rows and stay stable as replies arrive",
     "[social]") {
     on_database_loop([]() -> drogon::Task<> {
-        auto fixture = co_await SocialFixture::create();
+        Workers workers;
+        auto fixture = co_await SocialFixture::create(workers);
         const auto author = co_await fixture.account("alice");
         const auto post =
             co_await fixture.social.post(author, "alice", "Parent");
@@ -291,7 +298,8 @@ TEST_CASE(
 TEST_CASE("Feed pages expose pagination without returning the lookahead row",
           "[social]") {
     on_database_loop([]() -> drogon::Task<> {
-        auto fixture = co_await SocialFixture::create();
+        Workers workers;
+        auto fixture = co_await SocialFixture::create(workers);
         const auto alice = co_await fixture.account("alice");
         const auto first =
             co_await fixture.social.post(alice, "alice", "First");
@@ -314,7 +322,8 @@ TEST_CASE("Feed pages expose pagination without returning the lookahead row",
 
 TEST_CASE("Comment and like operations report a missing post", "[social]") {
     on_database_loop([]() -> drogon::Task<> {
-        auto fixture = co_await SocialFixture::create();
+        Workers workers;
+        auto fixture = co_await SocialFixture::create(workers);
         const auto alice = co_await fixture.account("alice");
         CHECK_FALSE(co_await fixture.social.thread(42, PageQuery::numbered(1),
                                                    fixture.users));

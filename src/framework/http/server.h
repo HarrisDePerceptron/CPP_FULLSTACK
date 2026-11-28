@@ -1,18 +1,14 @@
 #pragma once
 
 #include "app_namespace.h"
-#include "framework/db/database_backend.h"
 #include "framework/storage/uploads.h"
-#include "framework/support/log.h"
 
 #include <drogon/utils/coroutine.h>
 
 #include <cstddef>
 #include <filesystem>
 #include <functional>
-#include <memory>
 #include <string>
-#include <utility>
 
 namespace drogon {
 class HttpAppFramework;
@@ -51,37 +47,10 @@ struct ResolvedServerConfig {
     std::size_t max_request_bytes;
 };
 
-namespace detail {
-
-using MountRoutes =
-    std::function<void(drogon::HttpAppFramework&, const ServerRuntime&)>;
-using ServerSetup =
-    std::function<drogon::Task<MountRoutes>(DatabaseBackendPtr)>;
+using ServerSetup = std::function<drogon::Task<>(const ServerRuntime&)>;
 
 int run_http_server(drogon::HttpAppFramework& server,
                     const std::filesystem::path& root,
                     const ServerConfig& config, const ServerSetup& setup);
-
-}
-
-template <typename Initialize, typename RegisterRoutes>
-int run_http_server(drogon::HttpAppFramework& server,
-                    const std::filesystem::path& root,
-                    const ServerConfig& config, Initialize initialize,
-                    RegisterRoutes register_routes) {
-    return detail::run_http_server(
-        server, root, config,
-        [initialize = std::move(initialize),
-         register_routes = std::move(register_routes)](
-            DatabaseBackendPtr database) -> drogon::Task<detail::MountRoutes> {
-            auto services =
-                co_await std::invoke(initialize, std::move(database));
-            co_return [services = std::move(services),
-                       register_routes](drogon::HttpAppFramework& app,
-                                        const ServerRuntime& runtime) {
-                std::invoke(register_routes, app, services, runtime);
-            };
-        });
-}
 
 }

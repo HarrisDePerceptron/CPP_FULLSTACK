@@ -1,7 +1,7 @@
 #pragma once
 
 #include "app/dao/user_dao.h"
-#include "framework/support/workers.h"
+#include "password_hasher.h"
 
 #include <optional>
 #include <string>
@@ -17,7 +17,8 @@ struct Credentials {
 
 class UserService {
   public:
-    explicit UserService(UserDao dao) : dao_(std::move(dao)) {}
+    UserService(UserDao dao, PasswordHasher passwords)
+        : dao_(std::move(dao)), passwords_(passwords) {}
 
     drogon::Task<std::optional<Credentials>> seed_demo() const;
     drogon::Task<> configure_demo(std::string username,
@@ -26,13 +27,13 @@ class UserService {
 
     drogon::Task<std::optional<UserRecord::Id>>
     find_id(std::string username) const;
-    drogon::Task<bool> signup(Credentials credentials, Workers& workers) const;
+    drogon::Task<bool> signup(Credentials credentials) const;
     drogon::Task<std::optional<std::vector<Role>>>
-    authenticate(std::string username, std::string password,
-                 Workers& workers) const;
+    authenticate(std::string username, std::string password) const;
 
   private:
     UserDao dao_;
+    PasswordHasher passwords_;
 };
 
 }

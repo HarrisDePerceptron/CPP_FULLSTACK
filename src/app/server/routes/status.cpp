@@ -1,5 +1,6 @@
 #include "app/server/routes.h"
 #include "framework/http/json_response.h"
+#include "framework/http/server_runtime.h"
 
 #include <drogon/drogon.h>
 
@@ -16,8 +17,8 @@ Task<HttpResponsePtr> status(HttpRequestPtr request) {
 
 }
 
-void register_demo_routes(drogon::HttpAppFramework& server) {
-    server.registerHandler("/status", &status, {Get});
+void register_demo_routes(const ServerRuntime& runtime) {
+    runtime.routes().get("/status", status);
 }
 
 }

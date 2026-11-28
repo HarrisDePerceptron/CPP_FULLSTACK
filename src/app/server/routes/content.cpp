@@ -1,6 +1,7 @@
 #include "app_namespace.h"
 #include "app/server/routes.h"
 #include "framework/http/json_response.h"
+#include "framework/http/server_runtime.h"
 #include "framework/support/log.h"
 #include "app/services/content_client.h"
 
@@ -28,13 +29,10 @@ Task<HttpResponsePtr> content(const Logger& log, HttpRequestPtr request) {
 
 }
 
-void register_content_routes(drogon::HttpAppFramework& server,
-                             const Logger& log) {
-    server.registerHandler("/api/content",
-                           [&log](HttpRequestPtr request) {
-                               return content(log, std::move(request));
-                           },
-                           {Get});
+void register_content_routes(const ServerRuntime& runtime) {
+    runtime.routes()
+        .with(std::cref(runtime.log()))
+        .get("/api/content", content);
 }
 
 }

@@ -11,6 +11,7 @@
 namespace APP_NAMESPACE {
 
 struct Config;
+class ServerRuntime;
 
 struct Services {
     UserService users;
@@ -18,6 +19,7 @@ struct Services {
 };
 
 drogon::Task<std::shared_ptr<Services>>
-initialize_services(DatabaseBackendPtr database, const Config& config);
+initialize_services(DatabaseBackendPtr database, const Config& config,
+                    const ServerRuntime& runtime);
 
 }

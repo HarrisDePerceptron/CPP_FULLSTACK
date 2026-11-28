@@ -15,6 +15,7 @@
 #include <thread>
 #include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace APP_NAMESPACE {
@@ -40,6 +41,10 @@ class Workers {
     ~Workers() { stop(); }
 
     template <class Work> auto submit(Work work) {
+        return this->run_blocking(std::move(work));
+    }
+
+    template <class Work> auto run_blocking(Work work) {
         return Awaiter<Work>{*this, std::move(work), std::nullopt, {}};
     }
 
@@ -58,7 +63,10 @@ class Workers {
     template <class Work> struct Awaiter {
         Workers& workers;
         Work work;
-        std::optional<std::invoke_result_t<Work>> result;
+        using Result = std::invoke_result_t<Work&>;
+        std::optional<
+            std::conditional_t<std::is_void_v<Result>, std::monostate, Result>>
+            result;
         std::exception_ptr error;
 
         bool await_ready() const noexcept { return false; }
@@ -69,7 +77,10 @@ class Workers {
                 throw std::logic_error("worker await requires an event loop");
             workers.enqueue([this, loop, continuation] {
                 try {
-                    result.emplace(work());
+                    if constexpr (std::is_void_v<Result>)
+                        std::invoke(work);
+                    else
+                        result.emplace(std::invoke(work));
                 } catch (...) {
                     error = std::current_exception();
                 }
@@ -80,7 +91,8 @@ class Workers {
         auto await_resume() {
             if (error)
                 std::rethrow_exception(error);
-            return std::move(*result);
+            if constexpr (!std::is_void_v<Result>)
+                return std::move(*result);
         }
     };
 

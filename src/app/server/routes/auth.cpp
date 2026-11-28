@@ -3,6 +3,7 @@
 #include "app/server/services.h"
 #include "framework/auth/auth.h"
 #include "framework/http/json_response.h"
+#include "framework/http/server_runtime.h"
 
 #include <drogon/drogon.h>
 
@@ -39,7 +40,7 @@ Credentials read_credentials(const HttpRequestPtr& request,
 }
 
 Task<HttpResponsePtr> signup(std::shared_ptr<Services> services,
-                             HttpRequestPtr request, Workers& workers) {
+                             HttpRequestPtr request) {
     auto credentials = read_credentials(request, 8192);
     const auto& name = credentials.username;
     if (name.size() < 3 || name.size() > 32 ||
@@ -51,7 +52,7 @@ Task<HttpResponsePtr> signup(std::shared_ptr<Services> services,
             "username, and at least 8 bytes for the password.");
     }
     Identity identity{name};
-    if (!co_await services->users.signup(std::move(credentials), workers)) {
+    if (!co_await services->users.signup(std::move(credentials))) {
         co_return api_error(*request, k409Conflict, "CONFLICT",
                             "That username is already taken.");
     }
@@ -59,11 +60,10 @@ Task<HttpResponsePtr> signup(std::shared_ptr<Services> services,
 }
 
 Task<HttpResponsePtr> login(std::shared_ptr<Services> services,
-                            HttpRequestPtr request, const Tokens& tokens,
-                            Workers& workers) {
+                            const Tokens& tokens, HttpRequestPtr request) {
     const auto credentials = read_credentials(request, 4096);
     const auto roles = co_await services->users.authenticate(
-        credentials.username, credentials.password, workers);
+        credentials.username, credentials.password);
     if (!roles) {
         co_return api_error(*request, k401Unauthorized, "UNAUTHORIZED",
                             "Invalid username or password.");
@@ -97,23 +97,14 @@ Task<HttpResponsePtr> current_user(HttpRequestPtr request) {
 
 }
 
-void register_auth_routes(drogon::HttpAppFramework& server,
-                          const std::shared_ptr<Services>& services,
-                          const Tokens& tokens, Workers& workers) {
-    server.registerHandler("/api/signup",
-                           [services, &workers](HttpRequestPtr request) {
-                               return signup(services, std::move(request),
-                                             workers);
-                           },
-                           {Post});
-    server.registerHandler(
-        "/api/login",
-        [services, &tokens, &workers](HttpRequestPtr request) {
-            return login(services, std::move(request), tokens, workers);
-        },
-        {Post});
-    server.registerHandler("/api/logout", &logout, {Post});
-    server.registerHandler("/api/me", &current_user, {Get, Auth<>()});
+void register_auth_routes(const ServerRuntime& runtime,
+                          const std::shared_ptr<Services>& services) {
+    auto routes = runtime.routes();
+    auto accounts = routes.with(services);
+    accounts.post("/api/signup", signup);
+    accounts.with(std::cref(runtime.tokens())).post("/api/login", login);
+    routes.post("/api/logout", logout);
+    routes.get("/api/me", current_user, Auth<>());
 }
 
 }

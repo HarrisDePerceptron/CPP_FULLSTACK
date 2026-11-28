@@ -17,8 +17,10 @@
 #include <cstdint>
 #include <cstdio>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <string_view>
+#include <utility>
 
 namespace APP_NAMESPACE {
 namespace {
@@ -169,9 +171,8 @@ void ServerConfig::validate() const {
     parse_log_level(log_level);
 }
 
-int detail::run_http_server(drogon::HttpAppFramework& server,
-                            const fs::path& root, const ServerConfig& config,
-                            const ServerSetup& setup) {
+int run_http_server(drogon::HttpAppFramework& server, const fs::path& root,
+                    const ServerConfig& config, const ServerSetup& setup) {
     config.validate();
     const auto resolved = resolve_config(root, config);
     if (sodium_init() < 0)
@@ -196,21 +197,8 @@ int detail::run_http_server(drogon::HttpAppFramework& server,
     const Logger log(log_level);
     Tokens tokens(load_signing_key(),
                   std::chrono::seconds(config.jwt_lifetime_seconds));
-    const auto [runtime, mount_routes] = [&] {
-        trantor::EventLoopThread startup_thread;
-        startup_thread.run();
-        using Startup = std::pair<std::shared_ptr<ServerRuntime>, MountRoutes>;
-        const auto initialize = [&]() -> drogon::Task<Startup> {
-            co_await drogon::switchThreadCoro(startup_thread.getLoop());
-            auto database =
-                co_await open_sqlite_database(resolved.database_path);
-            auto runtime = std::make_shared<ServerRuntime>(
-                resolved, std::move(database), log, std::move(tokens));
-            auto mount = co_await setup(runtime->database());
-            co_return Startup{std::move(runtime), std::move(mount)};
-        };
-        return drogon::sync_wait(initialize());
-    }();
+    const auto runtime = std::make_shared<ServerRuntime>(server, resolved, log,
+                                                         std::move(tokens));
     server
         .addListener(config.bind_address,
                      static_cast<std::uint16_t>(config.port))
@@ -226,8 +214,17 @@ int detail::run_http_server(drogon::HttpAppFramework& server,
 
     register_access_logging(server, log_level, log, resolved.public_url_prefix);
     register_exception_handler(server, log);
-    mount_routes(server, *runtime);
-    const AuthVerifierScope auth_verifier({runtime, &runtime->tokens()});
+    {
+        trantor::EventLoopThread startup_thread;
+        startup_thread.run();
+        const auto initialize = [&]() -> drogon::Task<> {
+            co_await drogon::switchThreadCoro(startup_thread.getLoop());
+            co_await setup(*runtime);
+        };
+        drogon::sync_wait(initialize());
+    }
+    const detail::AuthVerifierScope auth_verifier(
+        {runtime, &runtime->tokens()});
     server.registerBeginningAdvice([log, address = config.bind_address,
                                     port = config.port] {
         log.write(LogLevel::info, "Listening on http://{}:{}", address, port);

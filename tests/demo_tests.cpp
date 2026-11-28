@@ -7,7 +7,9 @@
 #include "framework/auth/tokens.h"
 #include "framework/storage/uploads.h"
 #include "framework/support/base_config.h"
+#include "framework/support/log.h"
 #include "app/services/user_service.h"
+#include "framework/support/workers.h"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers.hpp>
@@ -167,9 +169,8 @@ template <typename T> T run_on_event_loop(drogon::Task<T> task) {
 
 bool authenticate(const UserService& users, std::string username,
                   std::string password) {
-    Workers workers;
-    return run_on_event_loop(users.authenticate(std::move(username),
-                                                std::move(password), workers))
+    return run_on_event_loop(
+               users.authenticate(std::move(username), std::move(password)))
         .has_value();
 }
 
@@ -1925,19 +1926,61 @@ TEST_CASE("An existing environment variable overrides .env", "[config]") {
     CHECK_THROWS(load_signing_key());
 }
 
+TEST_CASE("Blocking work runs off-loop and resumes on its calling thread",
+          "[workers]") {
+    Workers workers;
+    std::thread::id caller, worker, resumed;
+    const auto run = [&]() -> drogon::Task<> {
+        caller = std::this_thread::get_id();
+        co_await workers.run_blocking(
+            [&worker] { worker = std::this_thread::get_id(); });
+        resumed = std::this_thread::get_id();
+    };
+    run_on_event_loop(run());
+    CHECK(worker != std::thread::id{});
+    CHECK(worker != caller);
+    CHECK(resumed == caller);
+}
+
+TEST_CASE("Blocking work accepts a move-only callable and result",
+          "[workers]") {
+    Workers workers;
+    const auto run = [&]() -> drogon::Task<int> {
+        auto result = co_await workers.run_blocking(
+            [value = std::make_unique<int>(42)]() mutable {
+                return std::move(value);
+            });
+        co_return *result;
+    };
+    CHECK(run_on_event_loop(run()) == 42);
+}
+
+TEST_CASE("A blocking job exception reaches the awaiting coroutine",
+          "[workers]") {
+    Workers workers;
+    const auto run = [&]() -> drogon::Task<> {
+        co_await workers.run_blocking(
+            [] { throw std::runtime_error("job failed"); });
+    };
+    CHECK_THROWS_WITH(run_on_event_loop(run()), "job failed");
+}
+
 TEST_CASE("SQLite persists only the hashed demo credential", "[users]") {
     REQUIRE(sodium_init() >= 0);
+    Workers workers;
     TemporaryDirectory temporary;
     const auto path = temporary.path() / "users with spaces.sqlite3";
     const UserService first_run(
-        drogon::sync_wait(UserDao::init(open_test_database(path))));
+        drogon::sync_wait(UserDao::init(open_test_database(path))),
+        PasswordHasher(workers));
     const auto credentials = run_on_event_loop(first_run.seed_demo());
     REQUIRE(credentials.has_value());
     CHECK(credentials->username.starts_with("demo-"));
     CHECK(credentials->password.size() == 32);
 
     const UserService second_run(
-        drogon::sync_wait(UserDao::init(open_test_database(path))));
+        drogon::sync_wait(UserDao::init(open_test_database(path))),
+        PasswordHasher(workers));
     CHECK_FALSE(run_on_event_loop(second_run.seed_demo()));
     CHECK(
         authenticate(second_run, credentials->username, credentials->password));
@@ -1954,10 +1997,12 @@ TEST_CASE("Configured demo credentials replace a generated account and survive "
           "restart",
           "[users]") {
     REQUIRE(sodium_init() >= 0);
+    Workers workers;
     TemporaryDirectory temporary;
     const auto path = temporary.path() / "users.sqlite3";
     const UserService users(
-        drogon::sync_wait(UserDao::init(open_test_database(path))));
+        drogon::sync_wait(UserDao::init(open_test_database(path))),
+        PasswordHasher(workers));
     const auto previous = run_on_event_loop(users.seed_demo());
     REQUIRE(previous);
 
@@ -1966,7 +2011,8 @@ TEST_CASE("Configured demo credentials replace a generated account and survive "
     CHECK(authenticate(users, "test_user", "test_password"));
 
     const UserService reopened(
-        drogon::sync_wait(UserDao::init(open_test_database(path))));
+        drogon::sync_wait(UserDao::init(open_test_database(path))),
+        PasswordHasher(workers));
     run_on_event_loop(reopened.configure_demo("test_user", "new_password"));
     CHECK_FALSE(authenticate(reopened, "test_user", "test_password"));
     CHECK(authenticate(reopened, "test_user", "new_password"));
@@ -1976,13 +2022,15 @@ TEST_CASE("Configured demo credentials replace a generated account and survive "
 TEST_CASE("Concurrent demo seeding returns credentials to exactly one caller",
           "[users]") {
     REQUIRE(sodium_init() >= 0);
+    Workers workers;
     TemporaryDirectory temporary;
     const auto path = temporary.path() / "users.sqlite3";
     std::latch start(2);
     const auto seed = [&] {
         start.arrive_and_wait();
         const UserService users(
-            drogon::sync_wait(UserDao::init(open_test_database(path))));
+            drogon::sync_wait(UserDao::init(open_test_database(path))),
+            PasswordHasher(workers));
         return run_on_event_loop(users.seed_demo());
     };
     auto first = std::async(std::launch::async, seed);
@@ -1992,7 +2040,8 @@ TEST_CASE("Concurrent demo seeding returns credentials to exactly one caller",
     REQUIRE(first_result.has_value() != second_result.has_value());
     const auto& credentials = first_result ? *first_result : *second_result;
     const UserService reopened(
-        drogon::sync_wait(UserDao::init(open_test_database(path))));
+        drogon::sync_wait(UserDao::init(open_test_database(path))),
+        PasswordHasher(workers));
     CHECK_FALSE(run_on_event_loop(reopened.seed_demo()));
     CHECK(authenticate(reopened, credentials.username, credentials.password));
 }

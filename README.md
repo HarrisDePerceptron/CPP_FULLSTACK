@@ -96,26 +96,58 @@ request and response DTOs in `src/app/server/dto/`. Use the public framework
 headers for persistence, CRUD, or HTTP responses. Wire the feature
 into the service container and route registration in `src/app/server/`.
 
-`src/app/server/server.h` contains `serve()`. It gives the framework an async
-app initializer and a route registration callback. The framework owns the
-startup event loop, opens SQLite once, and creates the tokens, uploads,
-logger, and workers. The app initializer uses the supplied database to build
-the domain services and seed the demo account.
+`src/app/server/server.h` contains `serve()`. It gives the framework one async
+setup callback that receives `ServerRuntime`. The framework owns the startup
+event loop and creates the tokens, uploads, logger, and workers. The callback
+opens SQLite at the resolved database path, initializes the domain services,
+seeds the demo account, and registers routes before the server starts.
 
-Route registration runs on the startup caller's thread after initialization.
-`register_app_routes()` takes the framework's `ServerRuntime` and passes the
-dependencies each feature uses. Keep each HTTP method in its own
-`registerHandler()` call. The framework registers access logging and exception
-handling as separate hooks.
+`register_app_routes()` passes `ServerRuntime` to each feature module. Call
+`runtime.routes()` to register each HTTP method on its own line. The registrar
+supports `get`, `post`, `put`, `patch`, and `del`. Each call to `with(...)`
+creates a registrar with additional dependencies. Registered handlers retain
+copies of values and shared service handles. Use `std::ref` or `std::cref` to
+borrow objects that live through request handling.
+
+```cpp
+auto routes = runtime.routes();
+routes.get("/status", status);
+routes.with(services).get("/api/posts/{1}", view_post, Auth<>());
+routes.with(std::cref(runtime.log())).get("/api/content", content);
+```
+
+Declare named handlers with bound dependencies first, followed by
+`drogon::HttpRequestPtr` and path arguments in URL order. The framework
+registers access logging and exception handling as separate hooks.
+
+### Blocking work
+
+In a handler, bind the runtime with `routes.with(std::cref(runtime))` and
+await synchronous file or CPU work on its bounded pool:
+
+```cpp
+auto file = co_await runtime.run_blocking([&runtime, &name] {
+    return runtime.uploads().find(name);
+});
+```
+
+The callable can return a value or `void`. Its result or exception reaches the
+awaiting coroutine on the original event loop. Captured references must stay
+valid until the job completes. A full or closed pool raises `WorkersBusy`,
+which the HTTP exception hook maps to 503.
+
+Signup and login call `UserService` with credentials. Startup injects a
+`PasswordHasher` into the service to run password hashing and verification on
+the same pool. Database operations use the DAO's asynchronous methods.
 
 ### Protected routes and roles
 
-The framework installs its token verifier before starting Drogon. In `registerHandler()`, use
+The framework installs its token verifier before starting Drogon. When registering a route, use
 `Auth<>()` for any valid JWT, `Auth<Role::admin>()` for a single required role,
 or `Auth<Role::member, Role::admin>()` to allow either listed role.
 
 ```cpp
-server.registerHandler("/api/me", &current_user, {drogon::Get, Auth<>()});
+routes.get("/api/me", current_user, Auth<>());
 
 // Inside a protected handler, after the middleware runs:
 const auto& username = get_current_username(*request);

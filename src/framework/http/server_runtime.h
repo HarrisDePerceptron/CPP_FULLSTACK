@@ -1,29 +1,38 @@
 #pragma once
 
 #include "server.h"
+#include "route_registrar.h"
 #include "framework/auth/tokens.h"
+#include "framework/support/log.h"
 #include "framework/support/workers.h"
+
+#include <utility>
 
 namespace APP_NAMESPACE {
 
 class ServerRuntime {
   public:
-    ServerRuntime(ResolvedServerConfig config, DatabaseBackendPtr database,
+    ServerRuntime(drogon::HttpAppFramework& server, ResolvedServerConfig config,
                   Logger log, Tokens tokens)
-        : config_(std::move(config)), database_(std::move(database)),
-          log_(std::move(log)), tokens_(std::move(tokens)),
+        : server_(server), config_(std::move(config)), log_(std::move(log)),
+          tokens_(std::move(tokens)),
           uploads_(config_.uploads_directory, config_.max_upload_bytes) {}
 
+    drogon::HttpAppFramework& server() const { return server_; }
+    RouteRegistrar<> routes() const { return RouteRegistrar<>(server_); }
     const ResolvedServerConfig& config() const { return config_; }
-    const DatabaseBackendPtr& database() const { return database_; }
     const Logger& log() const { return log_; }
     const Tokens& tokens() const { return tokens_; }
     const Uploads& uploads() const { return uploads_; }
+    template <typename Work> auto run_blocking(Work work) const {
+        return workers_.run_blocking(std::move(work));
+    }
+
     Workers& workers() const { return workers_; }
 
   private:
+    drogon::HttpAppFramework& server_;
     ResolvedServerConfig config_;
-    DatabaseBackendPtr database_;
     Logger log_;
     Tokens tokens_;
     Uploads uploads_;
