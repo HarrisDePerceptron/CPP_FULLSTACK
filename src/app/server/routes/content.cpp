@@ -29,10 +29,11 @@ Task<HttpResponsePtr> content(const Logger& log, HttpRequestPtr request) {
 
 }
 
-void register_content_routes(const ServerRuntime& runtime) {
+void register_content_routes(ServerRuntime& runtime) {
     runtime.routes()
         .with(std::cref(runtime.log()))
-        .get("/api/content", content);
+        .get<"/api/content">(content)
+        .build();
 }
 
 }

@@ -2,6 +2,7 @@
 
 #include "framework/http/json_response.h"
 #include "framework/http/pagination.h"
+#include "framework/http/route_registrar.h"
 #include "crud_service.h"
 
 #include <drogon/HttpAppFramework.h>
@@ -45,6 +46,30 @@ template <typename Service> class CrudRouter {
             throw std::invalid_argument("CRUD router requires a service");
     }
     virtual ~CrudRouter() = default;
+
+    template <typename Registrar, typename... Args>
+    [[nodiscard]] static auto routes(const Registrar& registrar, Args... args) {
+        return detail::with_handler_last(
+            [&registrar](std::shared_ptr<const CrudRouter> router,
+                         auto... middleware) {
+                if (!router)
+                    throw std::invalid_argument("CRUD routes require a router");
+                return registrar
+                    .template add<detail::all_route_methods, RoutePath{""}>(
+                        [router](drogon::HttpRequestPtr request) {
+                            return router->dispatch(std::move(request));
+                        },
+                        middleware...)
+                    .template add<detail::all_route_methods, RoutePath{"/{1}"}>(
+                        [router](drogon::HttpRequestPtr request,
+                                 std::string id) {
+                            return router->dispatch(std::move(request),
+                                                    std::move(id));
+                        },
+                        middleware...);
+            },
+            std::move(args)...);
+    }
 
     static void mount(drogon::HttpAppFramework& server, std::string path,
                       std::shared_ptr<const CrudRouter> router,

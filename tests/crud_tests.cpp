@@ -178,6 +178,71 @@ bound_label(const std::string& prefix, drogon::HttpRequestPtr request, int id,
     co_return api_ok(*request, prefix + std::to_string(id) + "-" + name);
 }
 
+drogon::Task<drogon::HttpResponsePtr>
+bound_history(drogon::HttpRequestPtr request, int id) {
+    co_return api_ok(*request, id);
+}
+
+using StaticGroup =
+    decltype(std::declval<ServerRuntime&>().routes<"/widgets/">());
+using UnprefixedGroup = decltype(std::declval<ServerRuntime&>().routes());
+using StaticItem =
+    decltype(std::declval<StaticGroup>().get<"/{1}">(bound_history));
+using UppercaseItem =
+    decltype(std::declval<UnprefixedGroup>().get<"/WIDGETS/{1}">(
+        bound_history));
+using StaticPost =
+    decltype(std::declval<UnprefixedGroup>().post<"/widgets/{1}">(
+        bound_history));
+using StaticLiteral =
+    decltype(std::declval<UnprefixedGroup>().get<"/widgets/search">(
+        inspect_username));
+using StaticCrud = decltype(WidgetRouter::routes(
+    std::declval<StaticGroup>(), Auth(),
+    std::declval<std::shared_ptr<WidgetRouter>>()));
+
+template <typename Left, typename Right>
+concept CanMergeRoutes =
+    requires(const Left& left, const Right& right) { left.merge(right); };
+
+template <typename Group>
+concept CanAddItem =
+    requires(const Group& group) { group.template get<"/{1}">(bound_history); };
+
+template <typename Runtime>
+concept CanRegisterRoutes = requires(Runtime& runtime) { runtime.routes(); };
+
+template <typename Runtime>
+concept AcceptsRuntimePrefix = requires(
+    Runtime& runtime, std::string_view prefix) { runtime.routes(prefix); };
+
+template <typename Group>
+concept AcceptsRuntimePath =
+    requires(const Group& group, std::string_view path) {
+        group.get(path, bound_history);
+    };
+
+static_assert(CanRegisterRoutes<ServerRuntime>);
+static_assert(!CanRegisterRoutes<const ServerRuntime>);
+static_assert(!AcceptsRuntimePrefix<ServerRuntime>);
+static_assert(!AcceptsRuntimePath<StaticGroup>);
+static_assert(!CanAddItem<StaticItem>);
+static_assert(!CanMergeRoutes<StaticItem, UppercaseItem>);
+static_assert(CanMergeRoutes<StaticItem, StaticPost>);
+static_assert(CanMergeRoutes<StaticItem, StaticLiteral>);
+static_assert(!CanMergeRoutes<StaticCrud, StaticPost>);
+static_assert(CanMergeRoutes<StaticCrud, StaticLiteral>);
+using ParameterizedA =
+    decltype(std::declval<StaticGroup>().get<"/{1}/history">(bound_history));
+using ParameterizedB =
+    decltype(std::declval<StaticGroup>().get<"/active/{1}">(bound_history));
+static_assert(!CanMergeRoutes<ParameterizedA, ParameterizedB>);
+using StaticPrefixRoot =
+    decltype(std::declval<StaticGroup>().get<"">(inspect_username));
+using StaticFullRoot =
+    decltype(std::declval<UnprefixedGroup>().get<"/widgets">(inspect_username));
+static_assert(!CanMergeRoutes<StaticPrefixRoot, StaticFullRoot>);
+
 Json::Value check_reply(const drogon::HttpResponsePtr& response, int status,
                         ApiPagination pagination = {}) {
     REQUIRE(response->statusCode() == status);
@@ -235,23 +300,10 @@ class CrudServer {
                         co_return nullptr;
                     },
                     {drogon::Get});
-                for (const std::string prefix :
-                     {"/success", "/errors", "/edges"}) {
-                    auto database =
-                        drogon::sync_wait(open_sqlite_database(":memory:"));
-                    auto service = std::make_shared<WidgetService>(
-                        drogon::sync_wait(WidgetDao::init(database)));
-                    WidgetRouter::mount(
-                        server, prefix + "/widgets",
-                        std::make_shared<WidgetRouter>(service));
-                    WidgetRouter::mount(
-                        server, prefix + "/readonly",
-                        std::make_shared<WidgetRouter>(
-                            service, CrudMethods{.create = false,
-                                                 .patch = false,
-                                                 .remove = false}));
-                }
                 this->mount_social(server);
+                this->mount_widgets<"/success/widgets", "/success/readonly">();
+                this->mount_widgets<"/errors/widgets", "/errors/readonly">();
+                this->mount_widgets<"/edges/widgets", "/edges/readonly">();
                 const detail::AuthVerifierScope auth_verifier(
                     {runtime_, &runtime_->tokens()});
                 server.registerBeginningAdvice([ready] { ready->set_value(); });
@@ -285,6 +337,23 @@ class CrudServer {
     }
 
   private:
+    template <RoutePath Widgets, RoutePath Readonly> void mount_widgets() {
+        auto database = drogon::sync_wait(open_sqlite_database(":memory:"));
+        auto service = std::make_shared<WidgetService>(
+            drogon::sync_wait(WidgetDao::init(database)));
+        auto widgets = runtime_->routes<Widgets>();
+        auto extra = widgets.template get<"/{1}/history">(bound_history);
+        WidgetRouter::routes(widgets, std::make_shared<WidgetRouter>(service))
+            .merge(extra)
+            .build();
+        WidgetRouter::routes(
+            runtime_->routes<Readonly>(),
+            std::make_shared<WidgetRouter>(
+                service,
+                CrudMethods{.create = false, .patch = false, .remove = false}))
+            .build();
+    }
+
     void mount_social(drogon::HttpAppFramework& server) {
         if (sodium_init() < 0)
             throw std::runtime_error("Could not initialize libsodium");
@@ -312,14 +381,33 @@ class CrudServer {
                                    co_return api_ok(*request);
                                },
                                {drogon::Get});
-        auto routes = runtime_->routes();
-        routes.get("/fixture/auth/any", inspect_username, Auth<>());
-        routes.get("/fixture/auth/admin", inspect_username,
-                   Auth<Role::admin>());
-        routes.get("/fixture/auth/either", inspect_username,
-                   Auth<Role::member, Role::admin>());
-        routes.with(std::string("item-"))
-            .patch("/fixture/bound/{1}/{2}", bound_label);
+        auto routes = runtime_->routes<"/fixture">();
+        routes.get<"/auth/any">(Auth(), inspect_username)
+            .get<"/auth/admin">(Auth<Role::admin>(), inspect_username)
+            .get<"/auth/either">(Auth<Role::member, Role::admin>(),
+                                 inspect_username)
+            .with(std::string("item-"))
+            .patch<"/bound/{1}/{2}">(bound_label)
+            .build();
+        auto precedence = runtime_->routes<"/fixture/precedence">();
+        precedence.get<"/search">(Auth(), inspect_username)
+            .get<"/{1}">(bound_history)
+            .post<"/{1}">(bound_history)
+            .build();
+
+        auto separate = runtime_->routes<"/fixture/separate">();
+        separate.get<"/{1}">(bound_history).build();
+        bool clash_rejected = false;
+        try {
+            separate.get<"/uninstalled/path">(inspect_username)
+                .get<"/{1}">(bound_history)
+                .build();
+        } catch (const std::invalid_argument&) {
+            clash_rejected = true;
+        }
+        if (!clash_rejected)
+            throw std::logic_error(
+                "Expected the separate route group clash to be rejected");
     }
 
     unsigned short port_;
@@ -419,6 +507,37 @@ TEST_CASE("A bound PATCH route retains its prefix and receives both path "
     const auto data = crud_test::check_reply(
         client.patch("/fixture/bound/42/widget", "{}"), 200);
     CHECK(data[0].asString() == "item-42-widget");
+}
+
+TEST_CASE(
+    "Separately installed route groups reject clashes before installation",
+    "[http]") {
+    const crud_test::CrudClient client("");
+    const auto item =
+        crud_test::check_reply(client.get("/fixture/separate/42"), 200);
+    CHECK(item[0].asInt() == 42);
+    CHECK(client.get("/fixture/separate/uninstalled/path")->statusCode() ==
+          drogon::k404NotFound);
+}
+
+TEST_CASE("A literal route takes precedence over a parameterized route",
+          "[http]") {
+    const auto client = crud_test::CrudClient::social();
+    const auto literal =
+        crud_test::check_reply(client.get("/fixture/precedence/search"), 200);
+    CHECK(literal[0]["username"].asString() == "social-fixture");
+    const auto item = crud_test::check_reply(
+        client.post("/fixture/precedence/42", "{}"), 200);
+    CHECK(item[0].asInt() == 42);
+    CHECK(client.post("/fixture/precedence/search", "{}")->statusCode() ==
+          drogon::k405MethodNotAllowed);
+}
+
+TEST_CASE("CRUD route groups merge with custom item subpaths", "[http]") {
+    const crud_test::CrudClient client("/success");
+    const auto history =
+        crud_test::check_reply(client.get("/widgets/42/history"), 200);
+    CHECK(history[0].asInt() == 42);
 }
 
 TEST_CASE("The exception hook returns a 503 for a busy worker pool", "[http]") {

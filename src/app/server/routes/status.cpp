@@ -17,8 +17,8 @@ Task<HttpResponsePtr> status(HttpRequestPtr request) {
 
 }
 
-void register_demo_routes(const ServerRuntime& runtime) {
-    runtime.routes().get("/status", status);
+void register_demo_routes(ServerRuntime& runtime) {
+    runtime.routes().get<"/status">(status).build();
 }
 
 }

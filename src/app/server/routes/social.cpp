@@ -229,24 +229,38 @@ Task<HttpResponsePtr> unlike_post(std::shared_ptr<Services> services,
 
 }
 
-void register_social_routes(const ServerRuntime& runtime,
+void register_social_routes(ServerRuntime& runtime,
                             const std::shared_ptr<Services>& services) {
-    auto routes = runtime.routes();
-    auto posts = routes.with(services);
-    const auto& prefix = runtime.config().public_url_prefix;
-    posts.with(std::cref(runtime.tokens()), prefix).get("/", feed_page);
-    routes.get("/social", redirect_to_feed);
-    routes.with(prefix).get("/social/login", login_page);
+    const auto& asset_prefix = runtime.config().public_url_prefix;
 
-    posts.get("/api/search", search, Auth());
-    posts.get("/api/posts/{1}", view_post, Auth());
-    posts.get("/api/users/{1}/posts", list_user_posts, Auth());
-    posts.get("/api/posts", list_posts, Auth());
-    posts.post("/api/posts", create_post, Auth());
-    posts.get("/api/posts/{1}/comments", list_comments, Auth());
-    posts.post("/api/posts/{1}/comments", create_comment, Auth());
-    posts.put("/api/posts/{1}/like", like_post, Auth());
-    posts.del("/api/posts/{1}/like", unlike_post, Auth());
+    runtime.routes()
+        .with(services, std::cref(runtime.tokens()), asset_prefix)
+        .get<"/">(feed_page)
+        .build();
+
+    runtime.routes().get<"/social">(redirect_to_feed).build();
+
+    runtime.routes()
+        .with(asset_prefix)
+        .get<"/social/login">(login_page)
+        .build();
+
+    runtime.routes<"/api">()
+        .with(services)
+        .get<"/search">(Auth(), search)
+        .get<"/users/{1}/posts">(Auth(), list_user_posts)
+        .build();
+
+    runtime.routes<"/api/posts">()
+        .with(services)
+        .get<"">(Auth(), list_posts)
+        .post<"">(Auth(), create_post)
+        .get<"/{1}">(Auth(), view_post)
+        .get<"/{1}/comments">(Auth(), list_comments)
+        .post<"/{1}/comments">(Auth(), create_comment)
+        .put<"/{1}/like">(Auth(), like_post)
+        .del<"/{1}/like">(Auth(), unlike_post)
+        .build();
 }
 
 }

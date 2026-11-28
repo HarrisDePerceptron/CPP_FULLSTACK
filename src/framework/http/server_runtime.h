@@ -16,10 +16,14 @@ class ServerRuntime {
                   Logger log, Tokens tokens)
         : server_(server), config_(std::move(config)), log_(std::move(log)),
           tokens_(std::move(tokens)),
-          uploads_(config_.uploads_directory, config_.max_upload_bytes) {}
+          uploads_(config_.uploads_directory, config_.max_upload_bytes),
+          routes_(server) {}
 
-    drogon::HttpAppFramework& server() const { return server_; }
-    RouteRegistrar<> routes() const { return RouteRegistrar<>(server_); }
+    drogon::HttpAppFramework& server() { return server_; }
+    template <RoutePath Prefix = ""> auto routes() {
+        return RouteRegistrar<Prefix>(routes_);
+    }
+
     const ResolvedServerConfig& config() const { return config_; }
     const Logger& log() const { return log_; }
     const Tokens& tokens() const { return tokens_; }
@@ -36,6 +40,7 @@ class ServerRuntime {
     Logger log_;
     Tokens tokens_;
     Uploads uploads_;
+    detail::RouteTable routes_;
     mutable Workers workers_;
 };
 

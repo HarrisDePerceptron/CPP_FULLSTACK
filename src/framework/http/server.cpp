@@ -132,7 +132,6 @@ ResolvedServerConfig resolve_config(const fs::path& root,
             public_directory,
             resolve_child(public_directory, config.uploads_subdirectory),
             config.public_url_prefix,
-            config.public_url_prefix + config.uploads_subdirectory + '/',
             config.max_upload_bytes,
             config.max_upload_bytes + multipart_allowance};
 }

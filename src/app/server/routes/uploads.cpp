@@ -13,6 +13,8 @@ namespace {
 
 using namespace drogon;
 
+constexpr RoutePath download_prefix{"/public/uploads"};
+
 Task<HttpResponsePtr> upload(const ServerRuntime& runtime,
                              HttpRequestPtr request) {
     const auto saved = co_await runtime.run_blocking(
@@ -47,7 +49,7 @@ Task<HttpResponsePtr> upload(const ServerRuntime& runtime,
         }
     }
 
-    const auto url = runtime.config().uploads_url_prefix + *saved;
+    const auto url = std::string(download_prefix.view()) + '/' + *saved;
     auto response = api_ok(*request, UploadResult{url}, k201Created);
     response->addHeader("Location", url);
     co_return response;
@@ -70,11 +72,16 @@ Task<HttpResponsePtr> download(const ServerRuntime& runtime,
 
 }
 
-void register_upload_routes(const ServerRuntime& runtime) {
-    auto routes = runtime.routes().with(std::cref(runtime));
-    const auto& prefix = runtime.config().uploads_url_prefix;
-    routes.post("/api/uploads", upload, Auth<>());
-    routes.get(prefix + "{1}", download);
+void register_upload_routes(ServerRuntime& runtime) {
+    runtime.routes<"/api">()
+        .with(std::cref(runtime))
+        .post<"/uploads">(Auth(), upload)
+        .build();
+
+    runtime.routes<download_prefix>()
+        .with(std::cref(runtime))
+        .get<"/{1}">(download)
+        .build();
 }
 
 }

@@ -42,12 +42,11 @@ struct ResolvedServerConfig {
     std::filesystem::path public_directory;
     std::filesystem::path uploads_directory;
     std::string public_url_prefix;
-    std::string uploads_url_prefix;
     std::size_t max_upload_bytes;
     std::size_t max_request_bytes;
 };
 
-using ServerSetup = std::function<drogon::Task<>(const ServerRuntime&)>;
+using ServerSetup = std::function<drogon::Task<>(ServerRuntime&)>;
 
 int run_http_server(drogon::HttpAppFramework& server,
                     const std::filesystem::path& root,

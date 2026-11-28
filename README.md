@@ -102,27 +102,43 @@ event loop and creates the tokens, uploads, logger, and workers. The callback
 opens SQLite at the resolved database path, initializes the domain services,
 seeds the demo account, and registers routes before the server starts.
 
-`register_app_routes()` passes `ServerRuntime` to each feature module. Call
-`runtime.routes()` to register each HTTP method on its own line. The registrar
-supports `get`, `post`, `put`, `patch`, and `del`. Each call to `with(...)`
-creates a registrar with additional dependencies. Registered handlers retain
-copies of values and shared service handles. Use `std::ref` or `std::cref` to
-borrow objects that live through request handling.
+`register_app_routes()` passes `ServerRuntime` to each feature module. Use
+`runtime.routes()` for full paths and `runtime.routes<"/api">()` for a shared
+prefix.
+Each verb adds a route to a group with middleware before the handler. Use
+`.with(...)` to bind additional dependencies and `.merge(...)` to combine
+groups on the same runtime. Call `.build()` to register the resulting routes
+before serving.
 
 ```cpp
-auto routes = runtime.routes();
-routes.get("/status", status);
-routes.with(services).get("/api/posts/{1}", view_post, Auth<>());
-routes.with(std::cref(runtime.log())).get("/api/content", content);
+auto api = runtime.routes<"/api">();
+auto posts = api.with(services).get<"/posts/{1}">(Auth(), view_post);
+auto content_routes = api.with(std::cref(runtime.log())).get<"/content">(content);
+posts.merge(content_routes)
+    .merge(runtime.routes().get<"/status">(status))
+    .build();
 ```
 
+A suffix of `""` matches the prefix itself. A suffix of `"/"` matches its
+trailing-slash form. Prefixes and route paths are template arguments, so adding
+or merging routes catches clashes at compile time. Installation also checks for
+clashes with previously installed groups. Checks apply per HTTP method and
+compare literal segments case-insensitively. Checked paths accept letters,
+digits, hyphens, underscores, and tildes in literal segments, plus full-segment
+numbered placeholders such as `{1}`. Drogon's direct APIs support regex and
+query patterns. Literal routes take precedence over parameterized routes, so a
+literal match can return 405 for a method handled by an overlapping
+parameterized route.
+
 Declare named handlers with bound dependencies first, followed by
-`drogon::HttpRequestPtr` and path arguments in URL order. The framework
+`drogon::HttpRequestPtr` and path arguments in URL order. Registered handlers
+retain copies of bound values and shared service handles. Use `std::ref` or
+`std::cref` to borrow objects that live through request handling. The framework
 registers access logging and exception handling as separate hooks.
 
 ### Blocking work
 
-In a handler, bind the runtime with `routes.with(std::cref(runtime))` and
+For a handler that does blocking work, bind the runtime with `routes.with(std::cref(runtime))` and
 await synchronous file or CPU work on its bounded pool:
 
 ```cpp
@@ -143,11 +159,11 @@ the same pool. Database operations use the DAO's asynchronous methods.
 ### Protected routes and roles
 
 The framework installs its token verifier before starting Drogon. When registering a route, use
-`Auth<>()` for any valid JWT, `Auth<Role::admin>()` for a single required role,
+`Auth()` for any valid JWT, `Auth<Role::admin>()` for a single required role,
 or `Auth<Role::member, Role::admin>()` to allow either listed role.
 
 ```cpp
-routes.get("/api/me", current_user, Auth<>());
+runtime.routes().get<"/api/me">(Auth(), current_user).build();
 
 // Inside a protected handler, after the middleware runs:
 const auto& username = get_current_username(*request);
@@ -163,7 +179,7 @@ New and existing accounts default to `member`. Trusted code can replace the
 stored role set with `co_await user_dao.set_roles(user_id, {Role::member,
 Role::admin})`. Login signs the stored roles into the new JWT. Role changes
 take effect on the next login, and previously issued tokens keep their signed
-permissions until they expire. Legacy JWTs with no roles can use `Auth<>()`.
+permissions until they expire. Legacy JWTs with no roles can use `Auth()`.
 
 ## Database example
 
@@ -416,16 +432,23 @@ listener and log level.
 | `database_filename` | `users.sqlite3` inside the state directory |
 | `public_directory` | `public` |
 | `public_url_prefix` | `/public/` |
-| `uploads_subdirectory` | `uploads` inside the public directory and URL prefix |
+| `uploads_subdirectory` | `uploads` inside the public directory |
 | `request_cache_subdirectory` | `request-cache` inside the state directory |
 | `max_upload_bytes` | `10485760` (10 MiB) |
 
 Relative directories resolve from the app root. Public files and private state
 must be in separate directory trees. Use leading and trailing slashes for the
 public URL prefix and literal components made of letters, digits, hyphens,
-underscores, or tildes. Changing the public prefix updates asset and upload URLs.
+underscores, or tildes.
 Place the demo assets in the configured public directory. Drogon allows an
 additional 64 KiB per request for multipart framing.
+
+The app reserves `/public/uploads/` for downloads and returns upload links
+under that prefix.
+`public_url_prefix` controls static asset URLs, and `uploads_subdirectory`
+controls where uploaded files are stored. For older links issued with custom
+settings, replace the old upload URL prefix with `/public/uploads/` and keep
+the filename.
 
 In `.env`, `APP_SERVER='{"port":8081,"log_level":"warn","jwt_lifetime_seconds":3600,"public_url_prefix":"/assets/"}'`
 replaces the JSON `server` object. Omitted fields in that override use the defaults.
@@ -498,7 +521,9 @@ auto dao = co_await TodoDao::init(database);
 auto service = std::make_shared<TodoService>(std::move(dao));
 auto router = std::make_shared<TodoRouter>(service);
 
-TodoRouter::mount(server, "/api/todos", router);
+auto todo_routes =
+    TodoRouter::routes(runtime.routes<"/api/todos">(), router);
+todo_routes.build();
 ```
 
 | Request | Behavior |
@@ -525,7 +550,12 @@ A successful PATCH returns a single item in the data array.
 
 Pass `CrudMethods{.remove = false}` as the router's second constructor argument
 to disable deletion. A disabled method returns `405` with an `Allow` header.
-Pass middleware names as the fourth argument to `mount` to protect the routes.
+Pass middleware before the router to protect the routes, for example
+`TodoRouter::routes(runtime.routes<"/api/todos">(), Auth(), router)`.
+Merge custom routes such as `/{1}/history` into the CRUD group before
+installing. CRUD reserves the collection and item paths for every method so
+it can return its own 405 and Allow header. Direct `mount(...)` remains
+available for registrations outside the registrar's clash checks.
 List requests use one-based `page` and `per_page` (default 20, maximum 100).
 `has_more` comes from fetching one extra matching row. Responses have no total
 count. Single-item and empty DELETE responses use page and page size 1.

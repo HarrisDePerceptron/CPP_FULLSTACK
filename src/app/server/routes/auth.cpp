@@ -97,14 +97,17 @@ Task<HttpResponsePtr> current_user(HttpRequestPtr request) {
 
 }
 
-void register_auth_routes(const ServerRuntime& runtime,
+void register_auth_routes(ServerRuntime& runtime,
                           const std::shared_ptr<Services>& services) {
-    auto routes = runtime.routes();
-    auto accounts = routes.with(services);
-    accounts.post("/api/signup", signup);
-    accounts.with(std::cref(runtime.tokens())).post("/api/login", login);
-    routes.post("/api/logout", logout);
-    routes.get("/api/me", current_user, Auth<>());
+    auto routes = runtime.routes<"/api">();
+    auto accounts = routes.with(services)
+                        .post<"/signup">(signup)
+                        .with(std::cref(runtime.tokens()))
+                        .post<"/login">(login);
+    routes.post<"/logout">(logout)
+        .get<"/me">(Auth(), current_user)
+        .merge(accounts)
+        .build();
 }
 
 }

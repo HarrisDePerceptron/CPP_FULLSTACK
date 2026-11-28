@@ -2,7 +2,7 @@
 
 namespace APP_NAMESPACE {
 
-void register_app_routes(const ServerRuntime& runtime,
+void register_app_routes(ServerRuntime& runtime,
                          const std::shared_ptr<Services>& services) {
     register_demo_routes(runtime);
     register_auth_routes(runtime, services);
